@@ -239,10 +239,25 @@ const Dashboard = ({ user, onLogout }) => {
                       <NotificationsIcon />
                     </Badge>
                   </IconButton>
-                  <Avatar sx={{ background: 'linear-gradient(45deg, #667eea, #764ba2)', width: 32, height: 32 }}>
-                    <PersonIcon />
-                  </Avatar>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Avatar sx={{ background: 'linear-gradient(45deg, #667eea, #764ba2)', width: 32, height: 32 }}>
+                      <PersonIcon />
+                    </Avatar>
+                    <Typography variant="body2" sx={{ fontWeight: 600, color: '#2c3e50' }}>
+                      {user?.username || 'User'}
+                    </Typography>
+                  </Box>
                 </>
+              )}
+              {isMobile && (
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <Avatar sx={{ background: 'linear-gradient(45deg, #667eea, #764ba2)', width: 28, height: 28 }}>
+                    <PersonIcon sx={{ fontSize: 16 }} />
+                  </Avatar>
+                  <Typography variant="body2" sx={{ fontWeight: 600, color: '#2c3e50', fontSize: '0.8rem' }}>
+                    {user?.username || 'User'}
+                  </Typography>
+                </Box>
               )}
               <Button
                 variant="contained"

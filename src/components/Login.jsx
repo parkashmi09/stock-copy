@@ -88,6 +88,11 @@ const Login = ({ onLogin }) => {
           localStorage.setItem('token', data.token);
         }
         
+        // Store user data including username in localStorage
+        if (data.user) {
+          localStorage.setItem('user', JSON.stringify(data.user));
+        }
+        
         onLogin(data);
         navigate('/dashboard');
       } else {

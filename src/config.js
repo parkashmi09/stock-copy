@@ -19,4 +19,6 @@ export const API_ENDPOINTS = {
   STOCKS_DELETE: `${API_BASE_URL}/stocks-delete`,
   CATEGORIES_UPDATE: `${API_BASE_URL}/categories/update`,
   CATEGORIES_DELETE: `${API_BASE_URL}/categories/delete`,
+  // Transaction status update endpoint
+  TRANSACTION_STATUS_UPDATE: `${API_BASE_URL}/transaction`,
 }; 

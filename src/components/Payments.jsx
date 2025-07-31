@@ -32,7 +32,9 @@ import {
   Snackbar,
   Alert,
   Input,
-  InputAdornment
+  InputAdornment,
+  useTheme,
+  useMediaQuery
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -45,17 +47,26 @@ import {
   Refresh as RefreshIcon,
   Close as CloseIcon,
   Edit as EditIcon,
-  Delete as DeleteIcon
+  Delete as DeleteIcon,
+  Visibility as VisibilityIcon,
+  FirstPage as FirstPageIcon,
+  LastPage as LastPageIcon,
+  NavigateNext as NextPageIcon,
+  NavigateBefore as PrevPageIcon
 } from '@mui/icons-material';
-import { API_ENDPOINTS } from '../config';
+import { API_ENDPOINTS, API_BASE_URL } from '../config';
 
 const Payments = () => {
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('md'));
+  const isSmallMobile = useMediaQuery(theme.breakpoints.down('sm'));
+  
   const [paymentHistory, setPaymentHistory] = useState([]);
   const [products, setProducts] = useState([]);
   const [openAddPayment, setOpenAddPayment] = useState(false);
-  const [openHistory, setOpenHistory] = useState(false);
   const [openEditDialog, setOpenEditDialog] = useState(false);
   const [openDeleteDialog, setOpenDeleteDialog] = useState(false);
+  const [openViewDialog, setOpenViewDialog] = useState(false);
   const [selectedTransaction, setSelectedTransaction] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isFetchingTransactions, setIsFetchingTransactions] = useState(false);
@@ -63,6 +74,13 @@ const Payments = () => {
   const [notification, setNotification] = useState({ open: false, message: '', severity: 'success' });
   const [screenshotFile, setScreenshotFile] = useState(null);
   const [screenshotPreview, setScreenshotPreview] = useState(null);
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [paymentTypeFilter, setPaymentTypeFilter] = useState('all');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(2);
+  const [totalTransactions, setTotalTransactions] = useState(0);
+  const [totalPages, setTotalPages] = useState(0);
+  const [editingStatusId, setEditingStatusId] = useState(null);
 
   // New payment form state
   const [newPayment, setNewPayment] = useState({
@@ -87,12 +105,31 @@ const Payments = () => {
     fetchProducts();
   }, []);
 
-  // Fetch transactions from API
-  const fetchTransactions = async () => {
+  // Refetch transactions when filters or pagination changes
+  useEffect(() => {
+    fetchTransactions();
+  }, [currentPage, pageSize, statusFilter, paymentTypeFilter]);
+
+  // Fetch transactions from API with pagination
+  const fetchTransactions = async (page = currentPage, limit = pageSize) => {
     setIsFetchingTransactions(true);
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch(API_ENDPOINTS.TRANSACTIONS, {
+      
+      // Build query parameters
+      const params = new URLSearchParams();
+      params.append('page', page.toString());
+      params.append('limit', limit.toString());
+      
+      if (statusFilter !== 'all') {
+        params.append('status', statusFilter);
+      }
+      
+      if (paymentTypeFilter !== 'all') {
+        params.append('paymentType', paymentTypeFilter);
+      }
+
+      const response = await fetch(`${API_ENDPOINTS.TRANSACTIONS}?${params.toString()}`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
@@ -100,12 +137,23 @@ const Payments = () => {
         }
       });
 
+      const data = await response.json();
+
       if (response.ok) {
-        const data = await response.json();
-        setPaymentHistory(data);
+        // Handle paginated response
+        if (data.data && Array.isArray(data.data)) {
+          setPaymentHistory(data.data);
+          setTotalTransactions(data.pagination?.total || data.total || data.data.length);
+          setTotalPages(data.pagination?.totalPages || data.totalPages || Math.ceil((data.pagination?.total || data.total || data.data.length) / limit));
+          setCurrentPage(data.pagination?.currentPage || currentPage);
+        } else if (Array.isArray(data)) {
+          // Fallback for non-paginated response
+          setPaymentHistory(data);
+          setTotalTransactions(data.length);
+          setTotalPages(1);
+        }
       } else {
-        console.error('Failed to fetch transactions');
-        showNotification('Failed to load transactions', 'error');
+        showNotification(data.message || 'Failed to fetch transactions', 'error');
       }
     } catch (error) {
       console.error('Error fetching transactions:', error);
@@ -197,6 +245,8 @@ const Payments = () => {
     setIsLoading(true);
     try {
       const token = localStorage.getItem('token');
+
+      console.log("token", token);
       
       // Prepare form data for image upload
       const formData = new FormData();
@@ -222,7 +272,7 @@ const Payments = () => {
 
       if (response.ok) {
         // Refresh transactions after creation
-        await fetchTransactions();
+        await fetchTransactions(1, pageSize); // Go to first page after creating new transaction
         setNewPayment({
           transactionId: '',
           customerName: '',
@@ -242,6 +292,12 @@ const Payments = () => {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  // Handle view transaction
+  const handleViewTransaction = (transaction) => {
+    setSelectedTransaction(transaction);
+    setOpenViewDialog(true);
   };
 
   // Handle edit transaction
@@ -299,7 +355,7 @@ const Payments = () => {
 
       if (response.ok) {
         // Refresh transactions after update
-        await fetchTransactions();
+        await fetchTransactions(currentPage, pageSize);
         setOpenEditDialog(false);
         setSelectedTransaction(null);
         showNotification('Transaction updated successfully!', 'success');
@@ -335,7 +391,7 @@ const Payments = () => {
 
       if (response.ok) {
         // Refresh transactions after deletion
-        await fetchTransactions();
+        await fetchTransactions(currentPage, pageSize);
         setOpenDeleteDialog(false);
         setSelectedTransaction(null);
         showNotification('Transaction deleted successfully!', 'success');
@@ -351,28 +407,38 @@ const Payments = () => {
     }
   };
 
-  const getStatusChip = (status) => {
-    if (status === 'valid') {
-      return (
-        <Chip 
-          icon={<CheckIcon />}
-          label="Valid" 
-          size="small" 
-          color="success"
-          sx={{ fontSize: '0.7rem' }}
-        />
-      );
-    } else {
-      return (
-        <Chip 
-          icon={<PendingIcon />}
-          label="Pending" 
-          size="small" 
-          color="warning"
-          sx={{ fontSize: '0.7rem' }}
-        />
-      );
+  const getStatusChip = (status, transactionId, isClickable = false) => {
+    const chipProps = {
+      icon: status === 'completed' ? <CheckIcon sx={{ fontSize: 14 }} /> : 
+            status === 'cancelled' ? <CloseIcon sx={{ fontSize: 14 }} /> : 
+            <PendingIcon sx={{ fontSize: 14 }} />,
+      label: status === 'completed' ? 'Completed' : 
+             status === 'cancelled' ? 'Cancelled' : 'Pending',
+      size: 'small',
+      color: status === 'completed' ? 'success' : 
+             status === 'cancelled' ? 'error' : 'warning',
+      sx: { 
+        fontSize: '0.65rem',
+        height: 20,
+        cursor: isClickable ? 'pointer' : 'default',
+        '& .MuiChip-label': {
+          padding: '0 6px'
+        },
+        ...(isClickable && {
+          '&:hover': {
+            transform: 'scale(1.05)',
+            boxShadow: '0 2px 4px rgba(0,0,0,0.2)'
+          },
+          transition: 'all 0.2s ease'
+        })
+      }
+    };
+
+    if (isClickable) {
+      chipProps.onClick = () => handleStatusChipClick(transactionId);
     }
+
+    return <Chip {...chipProps} />;
   };
 
   const getTypeChip = (type) => {
@@ -384,7 +450,11 @@ const Payments = () => {
           sx={{ 
             backgroundColor: 'rgba(102, 126, 234, 0.1)',
             color: '#667eea',
-            fontSize: '0.7rem'
+            fontSize: '0.65rem',
+            height: 20,
+            '& .MuiChip-label': {
+              padding: '0 6px'
+            }
           }}
         />
       );
@@ -396,25 +466,133 @@ const Payments = () => {
           sx={{ 
             backgroundColor: 'rgba(158, 158, 158, 0.1)',
             color: '#9e9e9e',
-            fontSize: '0.7rem'
+            fontSize: '0.65rem',
+            height: 20,
+            '& .MuiChip-label': {
+              padding: '0 6px'
+            }
           }}
         />
       );
     }
   };
 
+  // Format date for display
+  const formatDate = (dateString) => {
+    if (!dateString) return 'N/A';
+    const date = new Date(dateString);
+    return date.toLocaleDateString('en-IN', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  };
+
+  // Get transaction status based on validation
+  const getTransactionStatus = (transaction) => {
+    // Return the actual status from the transaction or default to 'pending'
+    return transaction.status || 'pending';
+  };
+
+  // Check if user is admin
+  const isAdmin = () => {
+    const userData = localStorage.getItem('user');
+    if (userData) {
+      const user = JSON.parse(userData);
+      return user.role === 'admin';
+    }
+    return false;
+  };
+
+  // Get filtered transactions (now handled by API pagination)
+  const getFilteredTransactions = () => {
+    return paymentHistory;
+  };
+
+  // Handle status chip click
+  const handleStatusChipClick = (transactionId) => {
+    if (!isAdmin()) {
+      showNotification('Only admin users can update transaction status', 'error');
+      return;
+    }
+    setEditingStatusId(transactionId);
+  };
+
+  // Update transaction status
+  const updateTransactionStatus = async (transactionId, newStatus) => {
+    // Check if user is admin
+    if (!isAdmin()) {
+      showNotification('Only admin users can update transaction status', 'error');
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const token = localStorage.getItem('token');
+
+      console.log("token", token);
+      const response = await fetch(`${API_ENDPOINTS.TRANSACTION_STATUS_UPDATE}/${transactionId}/status`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ status: newStatus })
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        // Refresh transactions after status update
+        await fetchTransactions(currentPage, pageSize);
+        setEditingStatusId(null); // Close the dropdown
+        showNotification(`Transaction status updated to ${newStatus}!`, 'success');
+      } else {
+        showNotification(data.message || 'Failed to update transaction status', 'error');
+      }
+    } catch (error) {
+      console.error('Transaction status update error:', error);
+      showNotification('Network error. Please try again.', 'error');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   return (
-    <Container maxWidth="xl" sx={{ py: 3 }}>
+    <Container maxWidth="xl" sx={{ py: isMobile ? 2 : 3, px: isMobile ? 1 : 3 }}>
       {/* Payment Options Header */}
-      <Box sx={{ mb: 4 }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', mb: 3 }}>
-          <PaymentIcon sx={{ mr: 2, color: '#667eea', fontSize: 28 }} />
-          <Typography variant="h4" sx={{ fontWeight: 700, color: '#2c3e50' }}>
-            Payment Options
-          </Typography>
+      <Box sx={{ mb: isMobile ? 3 : 4 }}>
+        <Box sx={{ 
+          display: 'flex', 
+          alignItems: 'center', 
+          mb: isMobile ? 2 : 3,
+          flexDirection: isMobile ? 'column' : 'row',
+          textAlign: isMobile ? 'center' : 'left'
+        }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', mb: isMobile ? 1 : 0 }}>
+            <PaymentIcon sx={{ mr: 2, color: '#667eea', fontSize: isMobile ? 24 : 28 }} />
+            <Typography variant={isMobile ? "h5" : "h4"} sx={{ fontWeight: 700, color: '#2c3e50' }}>
+              Payment Options
+            </Typography>
+            {isAdmin() && (
+              <Chip 
+                label="Admin - Can Approve Payments"
+                size="small"
+                sx={{ 
+                  ml: 2, 
+                  backgroundColor: 'rgba(76, 175, 80, 0.1)', 
+                  color: '#4caf50',
+                  fontWeight: 600,
+                  fontSize: isMobile ? '0.6rem' : '0.75rem'
+                }}
+              />
+            )}
+          </Box>
         </Box>
         
-        <Grid container spacing={3}>
+        <Grid container spacing={isMobile ? 2 : 3}>
           <Grid item xs={12} sm={6} md={4}>
             <Button
               variant="outlined"
@@ -422,11 +600,11 @@ const Payments = () => {
               onClick={() => setOpenAddPayment(true)}
               fullWidth
               sx={{
-                height: 60,
+                height: isMobile ? 50 : 60,
                 borderColor: '#4caf50',
                 color: '#4caf50',
                 borderWidth: 2,
-                fontSize: '1rem',
+                fontSize: isMobile ? '0.9rem' : '1rem',
                 fontWeight: 600,
                 '&:hover': {
                   borderColor: '#45a049',
@@ -439,40 +617,88 @@ const Payments = () => {
             </Button>
           </Grid>
           
-          <Grid item xs={12} sm={6} md={4}>
-            <Button
-              variant="outlined"
-              startIcon={<HistoryIcon />}
-              onClick={() => setOpenHistory(true)}
-              fullWidth
-              sx={{
-                height: 60,
-                borderColor: '#2196f3',
-                color: '#2196f3',
-                borderWidth: 2,
-                fontSize: '1rem',
-                fontWeight: 600,
-                '&:hover': {
-                  borderColor: '#1976d2',
-                  backgroundColor: 'rgba(33, 150, 243, 0.1)',
-                  borderWidth: 2
-                }
-              }}
-            >
-              View Payment History
-            </Button>
+          {/* Status Summary */}
+          <Grid item xs={12}>
+            <Box sx={{ 
+              display: 'flex', 
+              gap: 2, 
+              flexWrap: 'wrap',
+              justifyContent: isMobile ? 'center' : 'flex-start',
+              mt: 1
+            }}>
+              <Chip 
+                label={`Pending: ${paymentHistory.filter(t => getTransactionStatus(t) === 'pending').length}`}
+                size="small"
+                onClick={() => setStatusFilter('pending')}
+                sx={{ 
+                  backgroundColor: statusFilter === 'pending' ? 'rgba(255, 193, 7, 0.3)' : 'rgba(255, 193, 7, 0.1)', 
+                  color: '#ff9800',
+                  fontWeight: 600,
+                  border: statusFilter === 'pending' ? '2px solid #ff9800' : 'none',
+                  cursor: 'pointer'
+                }}
+              />
+              <Chip 
+                label={`Completed: ${paymentHistory.filter(t => getTransactionStatus(t) === 'completed').length}`}
+                size="small"
+                onClick={() => setStatusFilter('completed')}
+                sx={{ 
+                  backgroundColor: statusFilter === 'completed' ? 'rgba(76, 175, 80, 0.3)' : 'rgba(76, 175, 80, 0.1)', 
+                  color: '#4caf50',
+                  fontWeight: 600,
+                  border: statusFilter === 'completed' ? '2px solid #4caf50' : 'none',
+                  cursor: 'pointer'
+                }}
+              />
+              <Chip 
+                label={`Cancelled: ${paymentHistory.filter(t => getTransactionStatus(t) === 'cancelled').length}`}
+                size="small"
+                onClick={() => setStatusFilter('cancelled')}
+                sx={{ 
+                  backgroundColor: statusFilter === 'cancelled' ? 'rgba(244, 67, 54, 0.3)' : 'rgba(244, 67, 54, 0.1)', 
+                  color: '#f44336',
+                  fontWeight: 600,
+                  border: statusFilter === 'cancelled' ? '2px solid #f44336' : 'none',
+                  cursor: 'pointer'
+                }}
+              />
+              <Chip 
+                label={`All: ${paymentHistory.length}`}
+                size="small"
+                onClick={() => setStatusFilter('all')}
+                sx={{ 
+                  backgroundColor: statusFilter === 'all' ? 'rgba(102, 126, 234, 0.3)' : 'rgba(102, 126, 234, 0.1)', 
+                  color: '#667eea',
+                  fontWeight: 600,
+                  border: statusFilter === 'all' ? '2px solid #667eea' : 'none',
+                  cursor: 'pointer'
+                }}
+              />
+            </Box>
           </Grid>
         </Grid>
       </Box>
 
       {/* Add Payment Dialog */}
-      <Dialog open={openAddPayment} onClose={() => setOpenAddPayment(false)} maxWidth="md" fullWidth>
-        <DialogTitle sx={{ fontWeight: 600, color: '#2c3e50', display: 'flex', alignItems: 'center' }}>
+      <Dialog 
+        open={openAddPayment} 
+        onClose={() => setOpenAddPayment(false)} 
+        maxWidth="md" 
+        fullWidth
+        fullScreen={isMobile}
+      >
+        <DialogTitle sx={{ 
+          fontWeight: 600, 
+          color: '#2c3e50', 
+          display: 'flex', 
+          alignItems: 'center',
+          fontSize: isMobile ? '1.1rem' : '1.25rem'
+        }}>
           <AddIcon sx={{ mr: 1, color: '#4caf50' }} />
           + Add Payment (Validate UPI Transaction)
         </DialogTitle>
         <DialogContent>
-          <Grid container spacing={3} sx={{ mt: 1 }}>
+          <Grid container spacing={isMobile ? 2 : 3} sx={{ mt: 1 }}>
             <Grid item xs={12} md={6}>
               <TextField
                 fullWidth
@@ -482,6 +708,7 @@ const Payments = () => {
                 variant="outlined"
                 required
                 placeholder="Enter UTR number"
+                size={isMobile ? "small" : "medium"}
               />
             </Grid>
             <Grid item xs={12} md={6}>
@@ -493,6 +720,7 @@ const Payments = () => {
                 variant="outlined"
                 required
                 placeholder="Enter customer name"
+                size={isMobile ? "small" : "medium"}
               />
             </Grid>
             <Grid item xs={12} md={6}>
@@ -511,6 +739,7 @@ const Payments = () => {
                   label="Select Product"
                   required
                   disabled={isFetchingProducts}
+                  size={isMobile ? "small" : "medium"}
                 >
                   {products.map((product) => (
                     <MenuItem key={product._id} value={product._id}>
@@ -538,6 +767,7 @@ const Payments = () => {
                   startAdornment: <InputAdornment position="start">₹</InputAdornment>,
                 }}
                 placeholder="0"
+                size={isMobile ? "small" : "medium"}
               />
             </Grid>
             <Grid item xs={12} md={3}>
@@ -547,6 +777,7 @@ const Payments = () => {
                   value={newPayment.paymentType}
                   onChange={(e) => setNewPayment({ ...newPayment, paymentType: e.target.value })}
                   label="Payment Type"
+                  size={isMobile ? "small" : "medium"}
                 >
                   <MenuItem value="online">Online</MenuItem>
                   <MenuItem value="manual">Manual</MenuItem>
@@ -556,7 +787,7 @@ const Payments = () => {
             
             {/* Screenshot Upload Section */}
             <Grid item xs={12}>
-              <Typography variant="h6" sx={{ mb: 2, color: '#2c3e50', fontWeight: 600 }}>
+              <Typography variant={isMobile ? "subtitle1" : "h6"} sx={{ mb: 2, color: '#2c3e50', fontWeight: 600 }}>
                 Payment Screenshot
               </Typography>
               
@@ -565,7 +796,7 @@ const Payments = () => {
                   sx={{
                     border: '2px dashed #ccc',
                     borderRadius: 2,
-                    p: 4,
+                    p: isMobile ? 2 : 4,
                     textAlign: 'center',
                     cursor: 'pointer',
                     '&:hover': {
@@ -575,11 +806,11 @@ const Payments = () => {
                   }}
                   onClick={() => document.getElementById('screenshot-upload').click()}
                 >
-                  <UploadIcon sx={{ fontSize: 48, color: '#ccc', mb: 2 }} />
-                  <Typography variant="body1" sx={{ color: '#666', mb: 1 }}>
+                  <UploadIcon sx={{ fontSize: isMobile ? 36 : 48, color: '#ccc', mb: 2 }} />
+                  <Typography variant={isMobile ? "body2" : "body1"} sx={{ color: '#666', mb: 1 }}>
                     Click to upload payment screenshot
                   </Typography>
-                  <Typography variant="body2" sx={{ color: '#999' }}>
+                  <Typography variant="body2" sx={{ color: '#999', fontSize: isMobile ? '0.75rem' : '0.875rem' }}>
                     PNG, JPG, JPEG up to 5MB
                   </Typography>
                   <input
@@ -597,7 +828,7 @@ const Payments = () => {
                     alt="Payment Screenshot"
                     style={{
                       width: '100%',
-                      maxHeight: 300,
+                      maxHeight: isMobile ? 200 : 300,
                       objectFit: 'contain',
                       borderRadius: 8,
                       border: '1px solid #e0e0e0'
@@ -623,10 +854,11 @@ const Payments = () => {
             </Grid>
           </Grid>
         </DialogContent>
-        <DialogActions sx={{ p: 3 }}>
+        <DialogActions sx={{ p: isMobile ? 2 : 3 }}>
           <Button 
             onClick={() => setOpenAddPayment(false)}
             sx={{ color: '#666' }}
+            size={isMobile ? "small" : "medium"}
           >
             Cancel
           </Button>
@@ -636,6 +868,7 @@ const Payments = () => {
                      !newPayment.productId || !newPayment.amountPaid.trim()}
             variant="contained"
             startIcon={<CheckIcon />}
+            size={isMobile ? "small" : "medium"}
             sx={{
               background: 'linear-gradient(45deg, #4caf50, #45a049)',
               '&:hover': {
@@ -649,13 +882,25 @@ const Payments = () => {
       </Dialog>
 
       {/* Edit Transaction Dialog */}
-      <Dialog open={openEditDialog} onClose={() => setOpenEditDialog(false)} maxWidth="md" fullWidth>
-        <DialogTitle sx={{ fontWeight: 600, color: '#2c3e50', display: 'flex', alignItems: 'center' }}>
+      <Dialog 
+        open={openEditDialog} 
+        onClose={() => setOpenEditDialog(false)} 
+        maxWidth="md" 
+        fullWidth
+        fullScreen={isMobile}
+      >
+        <DialogTitle sx={{ 
+          fontWeight: 600, 
+          color: '#2c3e50', 
+          display: 'flex', 
+          alignItems: 'center',
+          fontSize: isMobile ? '1.1rem' : '1.25rem'
+        }}>
           <EditIcon sx={{ mr: 1, color: '#f39c12' }} />
           Edit Transaction
         </DialogTitle>
         <DialogContent>
-          <Grid container spacing={3} sx={{ mt: 1 }}>
+          <Grid container spacing={isMobile ? 2 : 3} sx={{ mt: 1 }}>
             <Grid item xs={12} md={6}>
               <TextField
                 fullWidth
@@ -664,6 +909,7 @@ const Payments = () => {
                 onChange={(e) => setEditPayment({ ...editPayment, customerName: e.target.value })}
                 variant="outlined"
                 required
+                size={isMobile ? "small" : "medium"}
               />
             </Grid>
             <Grid item xs={12} md={6}>
@@ -682,10 +928,11 @@ const Payments = () => {
                   label="Select Product"
                   required
                   disabled={isFetchingProducts}
+                  size={isMobile ? "small" : "medium"}
                 >
                   {products.map((product) => (
                     <MenuItem key={product._id} value={product._id}>
-                      <Box sx={{ display: 'flex', justifyContent: 'space-between', width: '100%' }}>
+                      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
                         <Typography variant="body2">{product.name}</Typography>
                         <Typography variant="body2" sx={{ color: 'text.secondary', ml: 2 }}>
                           ₹{product.price.toLocaleString()}
@@ -708,6 +955,7 @@ const Payments = () => {
                 InputProps={{
                   startAdornment: <InputAdornment position="start">₹</InputAdornment>,
                 }}
+                size={isMobile ? "small" : "medium"}
               />
             </Grid>
             <Grid item xs={12} md={6}>
@@ -717,6 +965,7 @@ const Payments = () => {
                   value={editPayment.paymentType}
                   onChange={(e) => setEditPayment({ ...editPayment, paymentType: e.target.value })}
                   label="Payment Type"
+                  size={isMobile ? "small" : "medium"}
                 >
                   <MenuItem value="online">Online</MenuItem>
                   <MenuItem value="manual">Manual</MenuItem>
@@ -725,10 +974,11 @@ const Payments = () => {
             </Grid>
           </Grid>
         </DialogContent>
-        <DialogActions sx={{ p: 3 }}>
+        <DialogActions sx={{ p: isMobile ? 2 : 3 }}>
           <Button 
             onClick={() => setOpenEditDialog(false)}
             sx={{ color: '#666' }}
+            size={isMobile ? "small" : "medium"}
           >
             Cancel
           </Button>
@@ -738,6 +988,7 @@ const Payments = () => {
                      !editPayment.productId || !editPayment.amountPaid.trim()}
             variant="contained"
             startIcon={<CheckIcon />}
+            size={isMobile ? "small" : "medium"}
             sx={{
               background: 'linear-gradient(45deg, #f39c12, #e67e22)',
               '&:hover': {
@@ -751,19 +1002,30 @@ const Payments = () => {
       </Dialog>
 
       {/* Delete Confirmation Dialog */}
-      <Dialog open={openDeleteDialog} onClose={() => setOpenDeleteDialog(false)} maxWidth="sm" fullWidth>
-        <DialogTitle sx={{ fontWeight: 600, color: '#2c3e50' }}>
+      <Dialog 
+        open={openDeleteDialog} 
+        onClose={() => setOpenDeleteDialog(false)} 
+        maxWidth="sm" 
+        fullWidth
+        fullScreen={isMobile}
+      >
+        <DialogTitle sx={{ 
+          fontWeight: 600, 
+          color: '#2c3e50',
+          fontSize: isMobile ? '1.1rem' : '1.25rem'
+        }}>
           Confirm Delete
         </DialogTitle>
         <DialogContent>
-          <Typography variant="body1" sx={{ mt: 2 }}>
+          <Typography variant={isMobile ? "body2" : "body1"} sx={{ mt: 2 }}>
             Are you sure you want to delete transaction "{selectedTransaction?.transactionId}"? This action cannot be undone.
           </Typography>
         </DialogContent>
-        <DialogActions sx={{ p: 3 }}>
+        <DialogActions sx={{ p: isMobile ? 2 : 3 }}>
           <Button 
             onClick={() => setOpenDeleteDialog(false)}
             sx={{ color: '#666' }}
+            size={isMobile ? "small" : "medium"}
           >
             Cancel
           </Button>
@@ -772,6 +1034,7 @@ const Payments = () => {
             disabled={isLoading}
             variant="contained"
             color="error"
+            size={isMobile ? "small" : "medium"}
             sx={{
               background: 'linear-gradient(45deg, #e74c3c, #c0392b)',
               '&:hover': {
@@ -784,20 +1047,110 @@ const Payments = () => {
         </DialogActions>
       </Dialog>
 
-      {/* Transaction History Dialog */}
-      <Dialog open={openHistory} onClose={() => setOpenHistory(false)} maxWidth="lg" fullWidth>
-        <DialogTitle sx={{ fontWeight: 600, color: '#2c3e50', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <Box sx={{ display: 'flex', alignItems: 'center' }}>
-            <HistoryIcon sx={{ mr: 1, color: '#2196f3' }} />
-            Transaction History
+      {/* Transaction History Section */}
+      <Box sx={{ mb: isMobile ? 3 : 4 }}>
+        <Box sx={{ 
+          display: 'flex', 
+          alignItems: 'center', 
+          justifyContent: 'space-between',
+          mb: isMobile ? 2 : 3,
+          pb: 2,
+          borderBottom: '2px solid #e0e0e0',
+          flexDirection: isMobile ? 'column' : 'row',
+          gap: isMobile ? 2 : 0
+        }}>
+          <Box sx={{ 
+            display: 'flex', 
+            alignItems: 'center',
+            flexDirection: isMobile ? 'column' : 'row',
+            textAlign: isMobile ? 'center' : 'left'
+          }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', mb: isMobile ? 1 : 0 }}>
+              <HistoryIcon sx={{ mr: 2, color: '#2196f3', fontSize: isMobile ? 24 : 28 }} />
+              <Typography variant={isMobile ? "h6" : "h5"} sx={{ fontWeight: 700, color: '#2c3e50' }}>
+                Transaction History
+              </Typography>
+            </Box>
+            <Chip 
+              label={`${totalTransactions} transactions`}
+              size="small"
+              sx={{ 
+                ml: isMobile ? 0 : 2, 
+                mt: isMobile ? 1 : 0,
+                backgroundColor: 'rgba(33, 150, 243, 0.1)', 
+                color: '#2196f3' 
+              }}
+            />
           </Box>
-          <Box sx={{ display: 'flex', gap: 1 }}>
+          <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', flexWrap: 'wrap' }}>
+            {/* Status Filter Dropdown */}
+            <FormControl size={isMobile ? "small" : "medium"} sx={{ minWidth: isMobile ? 120 : 150 }}>
+              <InputLabel>Filter Status</InputLabel>
+              <Select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+                label="Filter Status"
+                sx={{
+                  '& .MuiSelect-select': {
+                    fontSize: isMobile ? '0.8rem' : '0.875rem'
+                  }
+                }}
+              >
+                <MenuItem value="all">All Status</MenuItem>
+                <MenuItem value="pending">Pending</MenuItem>
+                <MenuItem value="completed">Completed</MenuItem>
+                <MenuItem value="cancelled">Cancelled</MenuItem>
+              </Select>
+            </FormControl>
+            
+            {/* Payment Type Filter Dropdown */}
+            <FormControl size={isMobile ? "small" : "medium"} sx={{ minWidth: isMobile ? 120 : 150 }}>
+              <InputLabel>Payment Type</InputLabel>
+              <Select
+                value={paymentTypeFilter}
+                onChange={(e) => setPaymentTypeFilter(e.target.value)}
+                label="Payment Type"
+                sx={{
+                  '& .MuiSelect-select': {
+                    fontSize: isMobile ? '0.8rem' : '0.875rem'
+                  }
+                }}
+              >
+                <MenuItem value="all">All Types</MenuItem>
+                <MenuItem value="online">Online</MenuItem>
+                <MenuItem value="manual">Manual</MenuItem>
+              </Select>
+            </FormControl>
+
+            {/* Page Size Dropdown */}
+            <FormControl size={isMobile ? "small" : "medium"} sx={{ minWidth: isMobile ? 80 : 100 }}>
+              <InputLabel>Per Page</InputLabel>
+              <Select
+                value={pageSize}
+                onChange={(e) => {
+                  setPageSize(e.target.value);
+                  setCurrentPage(1); // Reset to first page when changing page size
+                }}
+                label="Per Page"
+                sx={{
+                  '& .MuiSelect-select': {
+                    fontSize: isMobile ? '0.8rem' : '0.875rem'
+                  }
+                }}
+              >
+                <MenuItem value={2}>2</MenuItem>
+                <MenuItem value={5}>5</MenuItem>
+                <MenuItem value={10}>10</MenuItem>
+                <MenuItem value={20}>20</MenuItem>
+              </Select>
+            </FormControl>
+
             <Button
               variant="outlined"
               startIcon={<RefreshIcon />}
-              onClick={fetchTransactions}
+              onClick={() => fetchTransactions()}
               disabled={isFetchingTransactions}
-              size="small"
+              size={isMobile ? "small" : "medium"}
               sx={{
                 borderColor: '#2196f3',
                 color: '#2196f3',
@@ -809,96 +1162,925 @@ const Payments = () => {
             >
               Refresh
             </Button>
-            <IconButton onClick={() => setOpenHistory(false)}>
-              <CloseIcon />
-            </IconButton>
           </Box>
-        </DialogTitle>
-        <DialogContent>
-          {isFetchingTransactions ? (
-            <Box sx={{ p: 4, textAlign: 'center' }}>
-              <LinearProgress sx={{ mb: 2 }} />
-              <Typography variant="body2" sx={{ color: 'text.secondary' }}>
-                Loading transactions...
-              </Typography>
-            </Box>
-          ) : (
-            <TableContainer>
-              <Table>
-                <TableHead>
-                  <TableRow>
-                    <TableCell sx={{ fontWeight: 'bold' }}>TXN ID</TableCell>
-                    <TableCell sx={{ fontWeight: 'bold' }}>Customer</TableCell>
-                    <TableCell sx={{ fontWeight: 'bold' }}>Product</TableCell>
-                    <TableCell sx={{ fontWeight: 'bold' }}>Amount</TableCell>
-                    <TableCell sx={{ fontWeight: 'bold' }}>Type</TableCell>
-                    <TableCell sx={{ fontWeight: 'bold' }}>Actions</TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {paymentHistory.map((item) => (
-                    <TableRow key={item._id}>
-                      <TableCell>
-                        <Typography variant="body2" sx={{ fontFamily: 'monospace', color: '#667eea', fontWeight: 600 }}>
-                          {item.transactionId}
-                        </Typography>
-                      </TableCell>
-                      <TableCell>
-                        <Typography variant="subtitle1" sx={{ fontWeight: 600, color: '#2c3e50' }}>
-                          {item.customerName}
-                        </Typography>
-                      </TableCell>
-                      <TableCell>
-                        <Typography variant="body2" sx={{ color: 'text.secondary' }}>
-                          {item.productName}
-                        </Typography>
-                      </TableCell>
-                      <TableCell>
-                        <Typography variant="subtitle2" sx={{ fontWeight: 600, color: '#f39c12' }}>
-                          ₹{item.amountPaid.toLocaleString()}
-                        </Typography>
-                      </TableCell>
-                      <TableCell>
-                        {getTypeChip(item.paymentType)}
-                      </TableCell>
-                      <TableCell>
+        </Box>
+
+        {/* Transaction Table */}
+        {isFetchingTransactions ? (
+          <Box sx={{ p: isMobile ? 2 : 4, textAlign: 'center' }}>
+            <LinearProgress sx={{ mb: 2 }} />
+            <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+              Loading transactions...
+            </Typography>
+          </Box>
+        ) : (
+          <Box sx={{ width: '100%' }}>
+            {isMobile ? (
+              // Mobile Card View
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                {getFilteredTransactions().map((item, index) => (
+                  <Card 
+                    key={item._id}
+                    sx={{ 
+                      boxShadow: '0 2px 8px rgba(0,0,0,0.1)', 
+                      borderRadius: 2,
+                      '&:hover': { 
+                        boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+                        transform: 'translateY(-1px)'
+                      },
+                      transition: 'all 0.2s ease'
+                    }}
+                  >
+                    <CardContent sx={{ p: 2 }}>
+                      {/* Header */}
+                      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
+                        <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                          <Avatar 
+                            sx={{ 
+                              width: 28, 
+                              height: 28, 
+                              mr: 1.5, 
+                              backgroundColor: '#667eea',
+                              fontSize: '0.7rem',
+                              fontWeight: 600
+                            }}
+                          >
+                            {item.transactionId.substring(0, 2).toUpperCase()}
+                          </Avatar>
+                          <Typography 
+                            variant="body2" 
+                            sx={{ 
+                              fontFamily: 'monospace', 
+                              color: '#667eea', 
+                              fontWeight: 600,
+                              fontSize: '0.75rem'
+                            }}
+                          >
+                            {item.transactionId}
+                          </Typography>
+                        </Box>
                         <Box sx={{ display: 'flex', gap: 0.5 }}>
                           <IconButton 
                             size="small" 
                             onClick={() => handleEditTransaction(item)}
                             sx={{ 
                               color: '#f39c12',
-                              '&:hover': { backgroundColor: 'rgba(243, 156, 18, 0.1)' }
+                              backgroundColor: 'rgba(243, 156, 18, 0.1)',
+                              width: 28,
+                              height: 28,
+                              '&:hover': { 
+                                backgroundColor: 'rgba(243, 156, 18, 0.2)'
+                              }
                             }}
                           >
-                            <EditIcon fontSize="small" />
+                            <EditIcon sx={{ fontSize: 16 }} />
                           </IconButton>
                           <IconButton 
                             size="small" 
                             onClick={() => handleDeleteTransaction(item)}
                             sx={{ 
                               color: '#e74c3c',
-                              '&:hover': { backgroundColor: 'rgba(231, 76, 60, 0.1)' }
+                              backgroundColor: 'rgba(231, 76, 60, 0.1)',
+                              width: 28,
+                              height: 28,
+                              '&:hover': { 
+                                backgroundColor: 'rgba(231, 76, 60, 0.2)'
+                              }
                             }}
                           >
-                            <DeleteIcon fontSize="small" />
+                            <DeleteIcon sx={{ fontSize: 16 }} />
                           </IconButton>
                         </Box>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                  {paymentHistory.length === 0 && (
-                    <TableRow>
-                      <TableCell colSpan={6} sx={{ textAlign: 'center', color: 'text.secondary' }}>
-                        No transactions found
-                      </TableCell>
-                    </TableRow>
-                  )}
-                </TableBody>
-              </Table>
-            </TableContainer>
+                      </Box>
+                      
+                      {/* Content */}
+                      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <Typography variant="body2" sx={{ color: 'text.secondary', fontSize: '0.75rem' }}>
+                            Customer:
+                          </Typography>
+                          <Typography variant="body2" sx={{ fontWeight: 600, color: '#2c3e50' }}>
+                            {item.customerName}
+                          </Typography>
+                        </Box>
+                        
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <Typography variant="body2" sx={{ color: 'text.secondary', fontSize: '0.75rem' }}>
+                            Product:
+                          </Typography>
+                          <Typography variant="body2" sx={{ fontWeight: 500, color: '#2c3e50' }}>
+                            {item.productName}
+                          </Typography>
+                        </Box>
+                        
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <Typography variant="body2" sx={{ color: 'text.secondary', fontSize: '0.75rem' }}>
+                            Amount:
+                          </Typography>
+                          <Typography variant="body2" sx={{ fontWeight: 700, color: '#f39c12' }}>
+                            ₹{item.amountPaid.toLocaleString()}
+                          </Typography>
+                        </Box>
+                        
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <Typography variant="body2" sx={{ color: 'text.secondary', fontSize: '0.75rem' }}>
+                            Type:
+                          </Typography>
+                          {getTypeChip(item.paymentType)}
+                        </Box>
+                        
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <Typography variant="body2" sx={{ color: 'text.secondary', fontSize: '0.75rem' }}>
+                            Status:
+                          </Typography>
+                          {editingStatusId === item._id ? (
+                            <FormControl size="small" sx={{ minWidth: 80 }}>
+                              <Select
+                                value={getTransactionStatus(item)}
+                                onChange={(e) => updateTransactionStatus(item._id, e.target.value)}
+                                onBlur={() => setEditingStatusId(null)}
+                                autoFocus
+                                sx={{
+                                  fontSize: '0.65rem',
+                                  height: 24,
+                                  '& .MuiSelect-select': {
+                                    padding: '2px 6px',
+                                    fontSize: '0.65rem'
+                                  }
+                                }}
+                              >
+                                <MenuItem value="pending">Pending</MenuItem>
+                                <MenuItem value="completed">Completed</MenuItem>
+                                <MenuItem value="cancelled">Cancelled</MenuItem>
+                              </Select>
+                            </FormControl>
+                          ) : (
+                            getStatusChip(getTransactionStatus(item), item._id, isAdmin())
+                          )}
+                        </Box>
+                        
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <Typography variant="body2" sx={{ color: 'text.secondary', fontSize: '0.75rem' }}>
+                            Date:
+                          </Typography>
+                          <Typography variant="body2" sx={{ color: 'text.secondary', fontSize: '0.75rem' }}>
+                            {formatDate(item.createdAt || item.updatedAt)}
+                          </Typography>
+                        </Box>
+                        
+                        {/* Image Display */}
+                        {item.image && (
+                          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <Typography variant="body2" sx={{ color: 'text.secondary', fontSize: '0.75rem' }}>
+                              Screenshot:
+                            </Typography>
+                            <Box sx={{ 
+                              width: 50, 
+                              height: 35, 
+                              borderRadius: 1, 
+                              overflow: 'hidden',
+                              border: '1px solid #e0e0e0',
+                              cursor: 'pointer'
+                            }}
+                            onClick={() => window.open(`${API_BASE_URL}/uploads/${item.image}`, '_blank')}
+                            >
+                              <img
+                                src={`${API_BASE_URL}/uploads/${item.image}`}
+                                alt="Payment Screenshot"
+                                style={{
+                                  width: '100%',
+                                  height: '100%',
+                                  objectFit: 'cover'
+                                }}
+                                onError={(e) => {
+                                  e.target.style.display = 'none';
+                                  e.target.nextSibling.style.display = 'flex';
+                                }}
+                              />
+                              <Box sx={{ 
+                                display: 'none',
+                                width: '100%', 
+                                height: '100%', 
+                                alignItems: 'center', 
+                                justifyContent: 'center',
+                                backgroundColor: '#f5f5f5',
+                                fontSize: '0.6rem',
+                                color: '#666'
+                              }}>
+                                No Image
+                              </Box>
+                            </Box>
+                          </Box>
+                        )}
+                      </Box>
+                    </CardContent>
+                  </Card>
+                ))}
+                
+                {getFilteredTransactions().length === 0 && (
+                  <Box sx={{ textAlign: 'center', py: 4 }}>
+                    <ReceiptIcon sx={{ fontSize: 48, color: '#ccc', mb: 2 }} />
+                    <Typography variant="h6" sx={{ color: 'text.secondary', mb: 1 }}>
+                      No transactions found
+                    </Typography>
+                    <Typography variant="body2" sx={{ color: 'text.secondary', mb: 2 }}>
+                      Start by adding your first payment transaction
+                    </Typography>
+                    <Button
+                      variant="contained"
+                      startIcon={<AddIcon />}
+                      onClick={() => setOpenAddPayment(true)}
+                      size="small"
+                    >
+                      Add First Transaction
+                    </Button>
+                  </Box>
+                )}
+              </Box>
+            ) : (
+              // Desktop Table View
+              <TableContainer 
+                component={Paper} 
+                sx={{ 
+                  boxShadow: '0 2px 8px rgba(0,0,0,0.1)', 
+                  borderRadius: 2,
+                  maxWidth: '100%',
+                  overflowX: 'auto'
+                }}
+              >
+                <Table sx={{ minWidth: 700 }} aria-label="transaction table">
+                                      <TableHead>
+                      <TableRow sx={{ backgroundColor: '#f8f9fa' }}>
+                        <TableCell sx={{ fontWeight: 700, color: '#2c3e50', fontSize: '0.75rem', width: 120, maxWidth: 120, padding: '8px 4px' }}>
+                          Transaction ID
+                        </TableCell>
+                        <TableCell sx={{ fontWeight: 700, color: '#2c3e50', fontSize: '0.75rem', width: 100, maxWidth: 100, padding: '8px 4px' }}>
+                          Customer
+                        </TableCell>
+                        <TableCell sx={{ fontWeight: 700, color: '#2c3e50', fontSize: '0.75rem', width: 100, maxWidth: 100, padding: '8px 4px' }}>
+                          Product
+                        </TableCell>
+                        <TableCell sx={{ fontWeight: 700, color: '#2c3e50', fontSize: '0.75rem', width: 80, maxWidth: 80, padding: '8px 4px' }}>
+                          Amount
+                        </TableCell>
+                        <TableCell sx={{ fontWeight: 700, color: '#2c3e50', fontSize: '0.75rem', width: 90, maxWidth: 90, padding: '8px 4px' }}>
+                          Payment Type
+                        </TableCell>
+                        <TableCell sx={{ fontWeight: 700, color: '#2c3e50', fontSize: '0.75rem', width: 120, maxWidth: 120, padding: '8px 4px' }}>
+                          Status
+                        </TableCell>
+                        <TableCell sx={{ fontWeight: 700, color: '#2c3e50', fontSize: '0.75rem', width: 70, maxWidth: 70, padding: '8px 4px' }}>
+                          Screenshot
+                        </TableCell>
+                        <TableCell sx={{ fontWeight: 700, color: '#2c3e50', fontSize: '0.75rem', width: 100, maxWidth: 100, padding: '8px 4px' }}>
+                          Date
+                        </TableCell>
+                        <TableCell sx={{ fontWeight: 700, color: '#2c3e50', fontSize: '0.75rem', width: 100, maxWidth: 100, padding: '8px 4px' }}>
+                          Actions
+                        </TableCell>
+                      </TableRow>
+                    </TableHead>
+                  <TableBody>
+                    {getFilteredTransactions().map((item, index) => (
+                      <TableRow 
+                        key={item._id}
+                        sx={{ 
+                          '&:nth-of-type(odd)': { backgroundColor: '#fafafa' },
+                          '&:hover': { backgroundColor: '#f5f5f5' },
+                          transition: 'background-color 0.2s ease',
+                          height: 48 // Reduced row height
+                        }}
+                      >
+                        <TableCell sx={{ width: 120, maxWidth: 120, padding: '8px 4px' }}>
+                          <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                            <Avatar 
+                              sx={{ 
+                                width: 24, 
+                                height: 24, 
+                                mr: 0.5, 
+                                backgroundColor: '#667eea',
+                                fontSize: '0.65rem',
+                                fontWeight: 600
+                              }}
+                            >
+                              {item.transactionId.substring(0, 2).toUpperCase()}
+                            </Avatar>
+                            <Typography 
+                              variant="body2" 
+                              sx={{ 
+                                fontFamily: 'monospace', 
+                                color: '#667eea', 
+                                fontWeight: 600,
+                                fontSize: '0.7rem',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap'
+                              }}
+                            >
+                              {item.transactionId}
+                            </Typography>
+                          </Box>
+                        </TableCell>
+                        <TableCell sx={{ width: 100, maxWidth: 100, padding: '8px 4px' }}>
+                          <Typography variant="subtitle2" sx={{ 
+                            fontWeight: 600, 
+                            color: '#2c3e50',
+                            fontSize: '0.7rem',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap'
+                          }}>
+                            {item.customerName}
+                          </Typography>
+                        </TableCell>
+                        <TableCell sx={{ width: 100, maxWidth: 100, padding: '8px 4px' }}>
+                          <Typography variant="body2" sx={{ 
+                            fontWeight: 500, 
+                            color: '#2c3e50',
+                            fontSize: '0.7rem',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap'
+                          }}>
+                            {item.productName}
+                          </Typography>
+                        </TableCell>
+                        <TableCell sx={{ width: 80, maxWidth: 80, padding: '8px 4px' }}>
+                          <Typography variant="subtitle2" sx={{ 
+                            fontWeight: 700, 
+                            color: '#f39c12',
+                            fontSize: '0.7rem'
+                          }}>
+                            ₹{item.amountPaid.toLocaleString()}
+                          </Typography>
+                        </TableCell>
+                        <TableCell sx={{ width: 90, maxWidth: 90, padding: '8px 4px' }}>
+                          {getTypeChip(item.paymentType)}
+                        </TableCell>
+                        <TableCell sx={{ width: 120, maxWidth: 120, padding: '8px 4px' }}>
+                          {editingStatusId === item._id ? (
+                            <FormControl size="small" sx={{ minWidth: 70 }}>
+                              <Select
+                                value={getTransactionStatus(item)}
+                                onChange={(e) => updateTransactionStatus(item._id, e.target.value)}
+                                onBlur={() => setEditingStatusId(null)}
+                                autoFocus
+                                sx={{
+                                  fontSize: '0.65rem',
+                                  height: 24,
+                                  '& .MuiSelect-select': {
+                                    padding: '2px 4px',
+                                    fontSize: '0.65rem'
+                                  }
+                                }}
+                              >
+                                <MenuItem value="pending">Pending</MenuItem>
+                                <MenuItem value="completed">Completed</MenuItem>
+                                <MenuItem value="cancelled">Cancelled</MenuItem>
+                              </Select>
+                            </FormControl>
+                          ) : (
+                            getStatusChip(getTransactionStatus(item), item._id, isAdmin())
+                          )}
+                        </TableCell>
+                        <TableCell sx={{ width: 70, maxWidth: 70, padding: '8px 4px' }}>
+                          {item.image ? (
+                            <Box sx={{ 
+                              width: 35, 
+                              height: 25, 
+                              borderRadius: 1, 
+                              overflow: 'hidden',
+                              border: '1px solid #e0e0e0',
+                              cursor: 'pointer',
+                              '&:hover': {
+                                transform: 'scale(1.05)',
+                                boxShadow: '0 2px 8px rgba(0,0,0,0.2)'
+                              },
+                              transition: 'all 0.2s ease'
+                            }}
+                            onClick={() => window.open(`${API_BASE_URL}/uploads/${item.image}`, '_blank')}
+                            title="Click to view full image"
+                            >
+                              <img
+                                src={`${API_BASE_URL}/uploads/${item.image}`}
+                                alt="Payment Screenshot"
+                                style={{
+                                  width: '100%',
+                                  height: '100%',
+                                  objectFit: 'cover'
+                                }}
+                                onError={(e) => {
+                                  e.target.style.display = 'none';
+                                  e.target.nextSibling.style.display = 'flex';
+                                }}
+                              />
+                              <Box sx={{ 
+                                display: 'none',
+                                width: '100%', 
+                                height: '100%', 
+                                alignItems: 'center', 
+                                justifyContent: 'center',
+                                backgroundColor: '#f5f5f5',
+                                fontSize: '0.45rem',
+                                color: '#666'
+                              }}>
+                                No Image
+                              </Box>
+                            </Box>
+                          ) : (
+                            <Typography variant="body2" sx={{ color: 'text.secondary', fontSize: '0.65rem' }}>
+                              No Image
+                            </Typography>
+                          )}
+                        </TableCell>
+                        <TableCell sx={{ width: 100, maxWidth: 100, padding: '8px 4px' }}>
+                          <Typography variant="body2" sx={{ color: 'text.secondary', fontSize: '0.65rem' }}>
+                            {formatDate(item.createdAt || item.updatedAt)}
+                          </Typography>
+                        </TableCell>
+                                                                        <TableCell sx={{ width: 100, maxWidth: 100, padding: '8px 4px' }}>
+                          <Box sx={{ display: 'flex', gap: 0.3 }}>
+                            <IconButton 
+                              size="small" 
+                              onClick={() => handleViewTransaction(item)}
+                              sx={{ 
+                                color: '#2196f3',
+                                backgroundColor: 'rgba(33, 150, 243, 0.1)',
+                                width: 24,
+                                height: 24,
+                                '&:hover': { 
+                                  backgroundColor: 'rgba(33, 150, 243, 0.2)',
+                                  transform: 'scale(1.1)'
+                                },
+                                transition: 'all 0.2s ease'
+                              }}
+                              title="View Transaction"
+                            >
+                              <VisibilityIcon sx={{ fontSize: 16 }} />
+                            </IconButton>
+                            <IconButton 
+                              size="small" 
+                              onClick={() => handleEditTransaction(item)}
+                              sx={{ 
+                                color: '#f39c12',
+                                backgroundColor: 'rgba(243, 156, 18, 0.1)',
+                                width: 24,
+                                height: 24,
+                                '&:hover': { 
+                                  backgroundColor: 'rgba(243, 156, 18, 0.2)',
+                                  transform: 'scale(1.1)'
+                                },
+                                transition: 'all 0.2s ease'
+                              }}
+                              title="Edit Transaction"
+                            >
+                              <EditIcon sx={{ fontSize: 16 }} />
+                            </IconButton>
+                            <IconButton 
+                              size="small" 
+                              onClick={() => handleDeleteTransaction(item)}
+                              sx={{ 
+                                color: '#e74c3c',
+                                backgroundColor: 'rgba(231, 76, 60, 0.1)',
+                                width: 24,
+                                height: 24,
+                                '&:hover': { 
+                                  backgroundColor: 'rgba(231, 76, 60, 0.2)',
+                                  transform: 'scale(1.1)'
+                                },
+                                transition: 'all 0.2s ease'
+                              }}
+                              title="Delete Transaction"
+                            >
+                              <DeleteIcon sx={{ fontSize: 16 }} />
+                            </IconButton>
+                          </Box>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                    {getFilteredTransactions().length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={9} sx={{ textAlign: 'center', py: 4 }}>
+                          <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                            <ReceiptIcon sx={{ fontSize: 64, color: '#ccc', mb: 2 }} />
+                            <Typography variant="h6" sx={{ color: 'text.secondary', mb: 1 }}>
+                              No transactions found
+                            </Typography>
+                            <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+                              Start by adding your first payment transaction
+                            </Typography>
+                            <Button
+                              variant="contained"
+                              startIcon={<AddIcon />}
+                              onClick={() => setOpenAddPayment(true)}
+                              sx={{ mt: 2 }}
+                            >
+                              Add First Transaction
+                            </Button>
+                          </Box>
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+            )}
+            
+            {/* Summary Footer */}
+            {getFilteredTransactions().length > 0 && (
+              <Box sx={{ 
+                p: isMobile ? 1.5 : 2, 
+                backgroundColor: '#f8f9fa', 
+                borderTop: '1px solid #e0e0e0',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                borderRadius: '0 0 8px 8px',
+                flexDirection: isMobile ? 'column' : 'row',
+                gap: isMobile ? 1 : 0
+              }}>
+                <Box>
+                  <Typography variant="body2" sx={{ color: 'text.secondary', fontSize: isMobile ? '0.8rem' : '0.875rem' }}>
+                    Showing <strong>{getFilteredTransactions().length}</strong> of <strong>{totalTransactions}</strong> transactions
+                  </Typography>
+                </Box>
+                <Box>
+                  <Typography variant="body2" sx={{ color: 'text.secondary', fontSize: isMobile ? '0.8rem' : '0.875rem' }}>
+                    Total Amount: <strong style={{ color: '#f39c12' }}>
+                      ₹{getFilteredTransactions().reduce((sum, item) => sum + item.amountPaid, 0).toLocaleString()}
+                    </strong>
+                  </Typography>
+                </Box>
+              </Box>
+            )}
+
+            {/* Pagination Controls */}
+            {totalPages > 1 && (
+              <Box sx={{ 
+                display: 'flex', 
+                justifyContent: 'center', 
+                alignItems: 'center',
+                gap: 1,
+                mt: 2,
+                p: 2,
+                backgroundColor: '#f8f9fa',
+                borderRadius: 2
+              }}>
+                <IconButton
+                  onClick={() => setCurrentPage(1)}
+                  disabled={currentPage === 1}
+                  size="small"
+                  sx={{ 
+                    color: currentPage === 1 ? '#ccc' : '#2196f3',
+                    '&:hover': {
+                      backgroundColor: currentPage === 1 ? 'transparent' : 'rgba(33, 150, 243, 0.1)'
+                    }
+                  }}
+                >
+                  <FirstPageIcon />
+                </IconButton>
+                
+                <IconButton
+                  onClick={() => setCurrentPage(currentPage - 1)}
+                  disabled={currentPage === 1}
+                  size="small"
+                  sx={{ 
+                    color: currentPage === 1 ? '#ccc' : '#2196f3',
+                    '&:hover': {
+                      backgroundColor: currentPage === 1 ? 'transparent' : 'rgba(33, 150, 243, 0.1)'
+                    }
+                  }}
+                >
+                  <PrevPageIcon />
+                </IconButton>
+
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                  {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                    let pageNum;
+                    if (totalPages <= 5) {
+                      pageNum = i + 1;
+                    } else if (currentPage <= 3) {
+                      pageNum = i + 1;
+                    } else if (currentPage >= totalPages - 2) {
+                      pageNum = totalPages - 4 + i;
+                    } else {
+                      pageNum = currentPage - 2 + i;
+                    }
+
+                    return (
+                      <IconButton
+                        key={pageNum}
+                        onClick={() => setCurrentPage(pageNum)}
+                        size="small"
+                        sx={{
+                          minWidth: 32,
+                          height: 32,
+                          backgroundColor: currentPage === pageNum ? '#2196f3' : 'transparent',
+                          color: currentPage === pageNum ? 'white' : '#666',
+                          '&:hover': {
+                            backgroundColor: currentPage === pageNum ? '#1976d2' : 'rgba(33, 150, 243, 0.1)'
+                          }
+                        }}
+                      >
+                        <Typography variant="body2" sx={{ fontSize: '0.75rem', fontWeight: 600 }}>
+                          {pageNum}
+                        </Typography>
+                      </IconButton>
+                    );
+                  })}
+                </Box>
+
+                <IconButton
+                  onClick={() => setCurrentPage(currentPage + 1)}
+                  disabled={currentPage === totalPages}
+                  size="small"
+                  sx={{ 
+                    color: currentPage === totalPages ? '#ccc' : '#2196f3',
+                    '&:hover': {
+                      backgroundColor: currentPage === totalPages ? 'transparent' : 'rgba(33, 150, 243, 0.1)'
+                    }
+                  }}
+                >
+                  <NextPageIcon />
+                </IconButton>
+
+                <IconButton
+                  onClick={() => setCurrentPage(totalPages)}
+                  disabled={currentPage === totalPages}
+                  size="small"
+                  sx={{ 
+                    color: currentPage === totalPages ? '#ccc' : '#2196f3',
+                    '&:hover': {
+                      backgroundColor: currentPage === totalPages ? 'transparent' : 'rgba(33, 150, 243, 0.1)'
+                    }
+                  }}
+                >
+                  <LastPageIcon />
+                </IconButton>
+
+                <Typography variant="body2" sx={{ color: 'text.secondary', fontSize: '0.75rem', ml: 1 }}>
+                  Page {currentPage} of {totalPages}
+                </Typography>
+              </Box>
+            )}
+          </Box>
+        )}
+      </Box>
+
+      {/* View Transaction Dialog */}
+      <Dialog 
+        open={openViewDialog} 
+        onClose={() => setOpenViewDialog(false)} 
+        maxWidth="md" 
+        fullWidth
+        fullScreen={isMobile}
+      >
+        <DialogTitle sx={{ 
+          fontWeight: 600, 
+          color: '#2c3e50', 
+          display: 'flex', 
+          alignItems: 'center',
+          fontSize: isMobile ? '1.1rem' : '1.25rem'
+        }}>
+          <VisibilityIcon sx={{ mr: 1, color: '#2196f3' }} />
+          Transaction Details
+        </DialogTitle>
+        <DialogContent>
+          {selectedTransaction && (
+            <Box sx={{ mt: 1 }}>
+              {/* Transaction ID Section */}
+              <Box sx={{ mb: 3 }}>
+                <Typography variant="h6" sx={{ fontWeight: 700, color: '#2c3e50', mb: 1 }}>
+                  Transaction Information
+                </Typography>
+                <Divider sx={{ mb: 2 }} />
+                <Grid container spacing={2}>
+                  <Grid item xs={12} md={6}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+                      <Avatar 
+                        sx={{ 
+                          width: 40, 
+                          height: 40, 
+                          mr: 2, 
+                          backgroundColor: '#667eea',
+                          fontSize: '1rem',
+                          fontWeight: 600
+                        }}
+                      >
+                        {selectedTransaction.transactionId.substring(0, 2).toUpperCase()}
+                      </Avatar>
+                      <Box>
+                        <Typography variant="subtitle1" sx={{ fontWeight: 600, color: '#667eea' }}>
+                          {selectedTransaction.transactionId}
+                        </Typography>
+                        <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                          Transaction ID
+                        </Typography>
+                      </Box>
+                    </Box>
+                  </Grid>
+                  <Grid item xs={12} md={6}>
+                    <Box sx={{ textAlign: 'right' }}>
+                      <Typography variant="h5" sx={{ fontWeight: 700, color: '#f39c12' }}>
+                        ₹{selectedTransaction.amountPaid.toLocaleString()}
+                      </Typography>
+                      <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                        Amount Paid
+                      </Typography>
+                    </Box>
+                  </Grid>
+                </Grid>
+              </Box>
+
+              {/* Customer & Product Section */}
+              <Box sx={{ mb: 3 }}>
+                <Typography variant="h6" sx={{ fontWeight: 700, color: '#2c3e50', mb: 1 }}>
+                  Customer & Product Details
+                </Typography>
+                <Divider sx={{ mb: 2 }} />
+                <Grid container spacing={3}>
+                  <Grid item xs={12} md={6}>
+                    <Box sx={{ p: 2, backgroundColor: '#f8f9fa', borderRadius: 2 }}>
+                      <Typography variant="subtitle2" sx={{ fontWeight: 600, color: '#2c3e50', mb: 1 }}>
+                        Customer Information
+                      </Typography>
+                      <Typography variant="body1" sx={{ fontWeight: 500, color: '#2c3e50', mb: 0.5 }}>
+                        {selectedTransaction.customerName}
+                      </Typography>
+                      <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                        Customer ID: {selectedTransaction._id}
+                      </Typography>
+                    </Box>
+                  </Grid>
+                  <Grid item xs={12} md={6}>
+                    <Box sx={{ p: 2, backgroundColor: '#f8f9fa', borderRadius: 2 }}>
+                      <Typography variant="subtitle2" sx={{ fontWeight: 600, color: '#2c3e50', mb: 1 }}>
+                        Product Information
+                      </Typography>
+                      <Typography variant="body1" sx={{ fontWeight: 500, color: '#2c3e50', mb: 0.5 }}>
+                        {selectedTransaction.productName}
+                      </Typography>
+                      <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                        Product ID: {selectedTransaction.productId || 'N/A'}
+                      </Typography>
+                    </Box>
+                  </Grid>
+                </Grid>
+              </Box>
+
+              {/* Payment Details Section */}
+              <Box sx={{ mb: 3 }}>
+                <Typography variant="h6" sx={{ fontWeight: 700, color: '#2c3e50', mb: 1 }}>
+                  Payment Details
+                </Typography>
+                <Divider sx={{ mb: 2 }} />
+                <Grid container spacing={3}>
+                  <Grid item xs={12} md={4}>
+                    <Box sx={{ textAlign: 'center', p: 2, backgroundColor: '#f8f9fa', borderRadius: 2 }}>
+                      <Typography variant="subtitle2" sx={{ fontWeight: 600, color: '#2c3e50', mb: 1 }}>
+                        Payment Type
+                      </Typography>
+                      {getTypeChip(selectedTransaction.paymentType)}
+                    </Box>
+                  </Grid>
+                  <Grid item xs={12} md={4}>
+                    <Box sx={{ textAlign: 'center', p: 2, backgroundColor: '#f8f9fa', borderRadius: 2 }}>
+                      <Typography variant="subtitle2" sx={{ fontWeight: 600, color: '#2c3e50', mb: 1 }}>
+                        Status
+                      </Typography>
+                      {getStatusChip(getTransactionStatus(selectedTransaction))}
+                    </Box>
+                  </Grid>
+                  <Grid item xs={12} md={4}>
+                    <Box sx={{ textAlign: 'center', p: 2, backgroundColor: '#f8f9fa', borderRadius: 2 }}>
+                      <Typography variant="subtitle2" sx={{ fontWeight: 600, color: '#2c3e50', mb: 1 }}>
+                        Date
+                      </Typography>
+                      <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+                        {formatDate(selectedTransaction.createdAt || selectedTransaction.updatedAt)}
+                      </Typography>
+                    </Box>
+                  </Grid>
+                </Grid>
+              </Box>
+
+              {/* Screenshot Section */}
+              {selectedTransaction.image && (
+                <Box sx={{ mb: 3 }}>
+                  <Typography variant="h6" sx={{ fontWeight: 700, color: '#2c3e50', mb: 1 }}>
+                    Payment Screenshot
+                  </Typography>
+                  <Divider sx={{ mb: 2 }} />
+                  <Box sx={{ 
+                    display: 'flex', 
+                    justifyContent: 'center',
+                    p: 2, 
+                    backgroundColor: '#f8f9fa', 
+                    borderRadius: 2 
+                  }}>
+                    <Box sx={{ 
+                      maxWidth: 400, 
+                      maxHeight: 300, 
+                      borderRadius: 2, 
+                      overflow: 'hidden',
+                      border: '1px solid #e0e0e0',
+                      cursor: 'pointer',
+                      '&:hover': {
+                        transform: 'scale(1.02)',
+                        boxShadow: '0 4px 12px rgba(0,0,0,0.15)'
+                      },
+                      transition: 'all 0.3s ease'
+                    }}
+                    onClick={() => window.open(`${API_BASE_URL}/uploads/${selectedTransaction.image}`, '_blank')}
+                    title="Click to view full image"
+                    >
+                      <img
+                        src={`${API_BASE_URL}/uploads/${selectedTransaction.image}`}
+                        alt="Payment Screenshot"
+                        style={{
+                          width: '100%',
+                          height: 'auto',
+                          objectFit: 'contain'
+                        }}
+                        onError={(e) => {
+                          e.target.style.display = 'none';
+                          e.target.nextSibling.style.display = 'flex';
+                        }}
+                      />
+                      <Box sx={{ 
+                        display: 'none',
+                        width: '100%', 
+                        height: 200, 
+                        alignItems: 'center', 
+                        justifyContent: 'center',
+                        backgroundColor: '#f5f5f5',
+                        fontSize: '0.875rem',
+                        color: '#666'
+                      }}>
+                        No Image Available
+                      </Box>
+                    </Box>
+                  </Box>
+                </Box>
+              )}
+
+              {/* Admin Status Update Section */}
+              {isAdmin() && (
+                <Box>
+                  <Typography variant="h6" sx={{ fontWeight: 700, color: '#2c3e50', mb: 1 }}>
+                    Status Management
+                  </Typography>
+                  <Divider sx={{ mb: 2 }} />
+                  <Box sx={{ p: 2, backgroundColor: '#f8f9fa', borderRadius: 2 }}>
+                    <Typography variant="body2" sx={{ color: 'text.secondary', mb: 2 }}>
+                      Update transaction status:
+                    </Typography>
+                    <FormControl size="medium" sx={{ minWidth: 200 }}>
+                      <InputLabel>Status</InputLabel>
+                      <Select
+                        value={getTransactionStatus(selectedTransaction)}
+                        onChange={(e) => updateTransactionStatus(selectedTransaction._id, e.target.value)}
+                        label="Status"
+                      >
+                        <MenuItem value="pending">Pending</MenuItem>
+                        <MenuItem value="completed">Completed</MenuItem>
+                        <MenuItem value="cancelled">Cancelled</MenuItem>
+                      </Select>
+                    </FormControl>
+                  </Box>
+                </Box>
+              )}
+            </Box>
           )}
         </DialogContent>
+        <DialogActions sx={{ p: isMobile ? 2 : 3 }}>
+          <Button 
+            onClick={() => setOpenViewDialog(false)}
+            sx={{ color: '#666' }}
+            size={isMobile ? "small" : "medium"}
+          >
+            Close
+          </Button>
+          {isAdmin() && (
+            <Button 
+              onClick={() => {
+                setOpenViewDialog(false);
+                handleEditTransaction(selectedTransaction);
+              }}
+              variant="contained"
+              startIcon={<EditIcon />}
+              size={isMobile ? "small" : "medium"}
+              sx={{
+                background: 'linear-gradient(45deg, #f39c12, #e67e22)',
+                '&:hover': {
+                  background: 'linear-gradient(45deg, #e67e22, #d35400)'
+                }
+              }}
+            >
+              Edit Transaction
+            </Button>
+          )}
+        </DialogActions>
       </Dialog>
 
       {/* Notification */}

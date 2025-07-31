@@ -125,9 +125,14 @@ const Signup = ({ onSignup }) => {
           localStorage.setItem('token', data.token);
         }
         
+        // Store user data including username in localStorage
+        if (data.user) {
+          localStorage.setItem('user', JSON.stringify(data.user));
+        }
+        
         setError('');
         onSignup(data);
-        navigate('/dashboard');
+        navigate('/login');
       } else {
         setError(data.message || 'Signup failed. Please try again.');
       }

@@ -49,7 +49,7 @@ function App() {
       if (userData) {
         setUser(JSON.parse(userData));
       } else {
-        setUser({ email: 'user@example.com', role: 'user' });
+        setUser({ email: 'user@example.com', username: 'user', role: 'user' });
       }
     }
     setIsLoading(false);
@@ -57,21 +57,31 @@ function App() {
 
   const handleLogin = (loginData) => {
     console.log('Login successful:', loginData);
-    // Set user data based on token payload or default
-    setUser({ 
-      email: loginData.email || 'user@example.com', 
-      role: 'user' 
-    });
+    // Set user data based on login response
+    if (loginData.user) {
+      setUser(loginData.user);
+    } else {
+      setUser({
+        email: loginData.email || 'user@example.com',
+        username: loginData.username || 'user',
+        role: loginData.role || 'user'
+      });
+    }
     setIsAuthenticated(true);
   };
 
   const handleSignup = (signupData) => {
     console.log('Signup successful:', signupData);
-    setUser({ 
-      email: signupData.email, 
-      username: signupData.username, 
-      role: signupData.role 
-    });
+    // Set user data based on signup response
+    if (signupData.user) {
+      setUser(signupData.user);
+    } else {
+      setUser({
+        email: signupData.email,
+        username: signupData.username,
+        role: signupData.role
+      });
+    }
     setIsAuthenticated(true);
   };
 
@@ -88,10 +98,10 @@ function App() {
     return (
       <ThemeProvider theme={theme}>
         <CssBaseline />
-        <div style={{ 
-          display: 'flex', 
-          justifyContent: 'center', 
-          alignItems: 'center', 
+        <div style={{
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
           height: '100vh',
           background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)'
         }}>
@@ -107,41 +117,41 @@ function App() {
       <Router>
         <Routes>
           {/* Public Routes */}
-          <Route 
-            path="/login" 
+          <Route
+            path="/login"
             element={
-              isAuthenticated ? 
-                <Navigate to="/dashboard" replace /> : 
+              isAuthenticated ?
+                <Navigate to="/dashboard" replace /> :
                 <Login onLogin={handleLogin} />
-            } 
+            }
           />
-          <Route 
-            path="/signup" 
+          <Route
+            path="/signup"
             element={
-              isAuthenticated ? 
-                <Navigate to="/dashboard" replace /> : 
+              isAuthenticated ?
+                <Navigate to="/dashboard" replace /> :
                 <Signup onSignup={handleSignup} />
-            } 
+            }
           />
-          
+
           {/* Protected Dashboard Routes */}
-          <Route 
-            path="/dashboard/*" 
+          <Route
+            path="/dashboard/*"
             element={
               <ProtectedRoute isAuthenticated={isAuthenticated}>
                 <Dashboard user={user} onLogout={handleLogout} />
               </ProtectedRoute>
-            } 
+            }
           />
-          
+
           {/* Default redirect */}
-          <Route 
-            path="/" 
+          <Route
+            path="/"
             element={
-              isAuthenticated ? 
-                <Navigate to="/dashboard" replace /> : 
+              isAuthenticated ?
+                <Navigate to="/dashboard" replace /> :
                 <Navigate to="/login" replace />
-            } 
+            }
           />
         </Routes>
       </Router>
