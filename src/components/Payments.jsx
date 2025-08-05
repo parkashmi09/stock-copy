@@ -77,7 +77,7 @@ const Payments = () => {
   const [statusFilter, setStatusFilter] = useState('all');
   const [paymentTypeFilter, setPaymentTypeFilter] = useState('all');
   const [currentPage, setCurrentPage] = useState(1);
-  const [pageSize, setPageSize] = useState(2);
+  const [pageSize, setPageSize] = useState(10);
   const [totalTransactions, setTotalTransactions] = useState(0);
   const [totalPages, setTotalPages] = useState(0);
   const [editingStatusId, setEditingStatusId] = useState(null);
