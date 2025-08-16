@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Box,
   Grid,
@@ -23,20 +23,53 @@ import {
   BarChart as BarChartIcon
 } from '@mui/icons-material';
 import StockChart from './StockChart';
+import { API_BASE_URL } from '../config';
 
 const Home = ({ stockData, recentStock, paymentHistory }) => {
+  const [weeklySales, setWeeklySales] = useState({});
+  const [loading, setLoading] = useState(true);
+
+  // Fetch weekly sales data
+  useEffect(() => {
+    const fetchWeeklySales = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/weekly-sales`);
+        if (response.ok) {
+          const data = await response.json();
+          setWeeklySales(data);
+        } else {
+          console.error('Failed to fetch weekly sales data');
+        }
+      } catch (error) {
+        console.error('Error fetching weekly sales:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchWeeklySales();
+  }, []);
+
   const totalStock = stockData.reduce((sum, item) => sum + item.quantity, 0);
   const soldToday = 8;
   const remainingStock = totalStock - soldToday;
   const totalValue = stockData.reduce((sum, item) => sum + (item.quantity * item.price), 0);
 
-  // Chart data
+  // Chart data using API data
   const salesData = {
-    labels: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+    labels: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'],
     datasets: [
       {
         label: 'Sales (₹)',
-        data: [12000, 19000, 15000, 25000, 22000, 30000, 28000],
+        data: [
+          weeklySales.Monday || 0,
+          weeklySales.Tuesday || 0,
+          weeklySales.Wednesday || 0,
+          weeklySales.Thursday || 0,
+          weeklySales.Friday || 0,
+          weeklySales.Saturday || 0,
+          weeklySales.Sunday || 0
+        ],
         borderColor: 'rgb(75, 192, 192)',
         backgroundColor: 'rgba(75, 192, 192, 0.2)',
         tension: 0.4,
@@ -203,7 +236,19 @@ const Home = ({ stockData, recentStock, paymentHistory }) => {
                 Sales Analytics
               </Typography>
               <Box sx={{ height: 300 }}>
-                <StockChart data={salesData} />
+                {loading ? (
+                  <Box sx={{ 
+                    display: 'flex', 
+                    justifyContent: 'center', 
+                    alignItems: 'center', 
+                    height: '100%',
+                    color: 'text.secondary'
+                  }}>
+                    <Typography>Loading sales data...</Typography>
+                  </Box>
+                ) : (
+                  <StockChart data={salesData} />
+                )}
               </Box>
             </CardContent>
           </Card>
