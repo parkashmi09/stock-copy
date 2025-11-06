@@ -67,6 +67,8 @@ const Payments = () => {
   const [openEditDialog, setOpenEditDialog] = useState(false);
   const [openDeleteDialog, setOpenDeleteDialog] = useState(false);
   const [openViewDialog, setOpenViewDialog] = useState(false);
+  const [openImageModal, setOpenImageModal] = useState(false);
+  const [selectedImageUrl, setSelectedImageUrl] = useState(null);
   const [selectedTransaction, setSelectedTransaction] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isFetchingTransactions, setIsFetchingTransactions] = useState(false);
@@ -88,7 +90,9 @@ const Payments = () => {
     customerName: '',
     productId: '',
     amountPaid: '',
-    paymentType: 'online'
+    paymentType: 'online',
+    address: '',
+    phoneNumber: ''
   });
 
   // Edit payment form state
@@ -96,7 +100,9 @@ const Payments = () => {
     customerName: '',
     productId: '',
     amountPaid: '',
-    paymentType: 'online'
+    paymentType: 'online',
+    address: '',
+    phoneNumber: ''
   });
 
   // Fetch transactions and products on component mount
@@ -226,7 +232,8 @@ const Payments = () => {
   // Create new transaction
   const createTransaction = async () => {
     if (!newPayment.transactionId.trim() || !newPayment.customerName.trim() || 
-        !newPayment.productId || !newPayment.amountPaid.trim()) {
+        !newPayment.productId || !newPayment.amountPaid.trim() ||
+        !newPayment.address.trim() || !newPayment.phoneNumber.trim()) {
       showNotification('Please fill in all required fields', 'error');
       return;
     }
@@ -255,6 +262,8 @@ const Payments = () => {
       formData.append('productName', selectedProduct.name);
       formData.append('amountPaid', parseFloat(newPayment.amountPaid));
       formData.append('paymentType', newPayment.paymentType);
+      formData.append('address', newPayment.address);
+      formData.append('phoneNumber', newPayment.phoneNumber);
       
       if (screenshotFile) {
         formData.append('image', screenshotFile);
@@ -278,7 +287,9 @@ const Payments = () => {
           customerName: '',
           productId: '',
           amountPaid: '',
-          paymentType: 'online'
+          paymentType: 'online',
+          address: '',
+          phoneNumber: ''
         });
         removeScreenshot();
         setOpenAddPayment(false);
@@ -311,14 +322,17 @@ const Payments = () => {
       customerName: transaction.customerName,
       productId: product?._id || '',
       amountPaid: transaction.amountPaid.toString(),
-      paymentType: transaction.paymentType
+      paymentType: transaction.paymentType,
+      address: transaction.address || '',
+      phoneNumber: transaction.phoneNumber || ''
     });
     setOpenEditDialog(true);
   };
 
   // Update transaction
   const updateTransaction = async () => {
-    if (!editPayment.customerName.trim() || !editPayment.productId || !editPayment.amountPaid.trim()) {
+    if (!editPayment.customerName.trim() || !editPayment.productId || !editPayment.amountPaid.trim() ||
+        !editPayment.address.trim() || !editPayment.phoneNumber.trim()) {
       showNotification('Please fill in all required fields', 'error');
       return;
     }
@@ -347,7 +361,9 @@ const Payments = () => {
           customerName: editPayment.customerName,
           productName: selectedProduct.name,
           amountPaid: parseFloat(editPayment.amountPaid),
-          paymentType: editPayment.paymentType
+          paymentType: editPayment.paymentType,
+          address: editPayment.address,
+          phoneNumber: editPayment.phoneNumber
         })
       });
 
@@ -488,6 +504,25 @@ const Payments = () => {
       hour: '2-digit',
       minute: '2-digit'
     });
+  };
+
+  // Get image URL - handle both full URLs and filenames
+  const getImageUrl = (image) => {
+    if (!image) return null;
+    // Check if it's already a full URL
+    if (image.startsWith('http://') || image.startsWith('https://')) {
+      return image;
+    }
+    // Otherwise, it's a filename, construct the URL
+    return `${API_BASE_URL}/uploads/${image}`;
+  };
+
+  // Handle image click to open modal
+  const handleImageClick = (image) => {
+    if (image) {
+      setSelectedImageUrl(getImageUrl(image));
+      setOpenImageModal(true);
+    }
   };
 
   // Get transaction status based on validation
@@ -724,6 +759,32 @@ const Payments = () => {
               />
             </Grid>
             <Grid item xs={12} md={6}>
+              <TextField
+                fullWidth
+                label="Phone Number"
+                value={newPayment.phoneNumber}
+                onChange={(e) => setNewPayment({ ...newPayment, phoneNumber: e.target.value })}
+                variant="outlined"
+                required
+                placeholder="Enter phone number"
+                size={isMobile ? "small" : "medium"}
+              />
+            </Grid>
+            <Grid item xs={12}>
+              <TextField
+                fullWidth
+                label="Address"
+                value={newPayment.address}
+                onChange={(e) => setNewPayment({ ...newPayment, address: e.target.value })}
+                variant="outlined"
+                required
+                placeholder="Enter address"
+                multiline
+                rows={2}
+                size={isMobile ? "small" : "medium"}
+              />
+            </Grid>
+            <Grid item xs={12} md={6}>
               <FormControl fullWidth>
                 <InputLabel>Select Product</InputLabel>
                 <Select
@@ -865,7 +926,8 @@ const Payments = () => {
           <Button 
             onClick={createTransaction}
             disabled={isLoading || !newPayment.transactionId.trim() || !newPayment.customerName.trim() || 
-                     !newPayment.productId || !newPayment.amountPaid.trim()}
+                     !newPayment.productId || !newPayment.amountPaid.trim() ||
+                     !newPayment.address.trim() || !newPayment.phoneNumber.trim()}
             variant="contained"
             startIcon={<CheckIcon />}
             size={isMobile ? "small" : "medium"}
@@ -909,6 +971,32 @@ const Payments = () => {
                 onChange={(e) => setEditPayment({ ...editPayment, customerName: e.target.value })}
                 variant="outlined"
                 required
+                size={isMobile ? "small" : "medium"}
+              />
+            </Grid>
+            <Grid item xs={12} md={6}>
+              <TextField
+                fullWidth
+                label="Phone Number"
+                value={editPayment.phoneNumber}
+                onChange={(e) => setEditPayment({ ...editPayment, phoneNumber: e.target.value })}
+                variant="outlined"
+                required
+                placeholder="Enter phone number"
+                size={isMobile ? "small" : "medium"}
+              />
+            </Grid>
+            <Grid item xs={12}>
+              <TextField
+                fullWidth
+                label="Address"
+                value={editPayment.address}
+                onChange={(e) => setEditPayment({ ...editPayment, address: e.target.value })}
+                variant="outlined"
+                required
+                placeholder="Enter address"
+                multiline
+                rows={2}
                 size={isMobile ? "small" : "medium"}
               />
             </Grid>
@@ -985,7 +1073,8 @@ const Payments = () => {
           <Button 
             onClick={updateTransaction}
             disabled={isLoading || !editPayment.customerName.trim() || 
-                     !editPayment.productId || !editPayment.amountPaid.trim()}
+                     !editPayment.productId || !editPayment.amountPaid.trim() ||
+                     !editPayment.address.trim() || !editPayment.phoneNumber.trim()}
             variant="contained"
             startIcon={<CheckIcon />}
             size={isMobile ? "small" : "medium"}
@@ -1264,6 +1353,28 @@ const Payments = () => {
                           </Typography>
                         </Box>
                         
+                        {item.phoneNumber && (
+                          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <Typography variant="body2" sx={{ color: 'text.secondary', fontSize: '0.75rem' }}>
+                              Phone:
+                            </Typography>
+                            <Typography variant="body2" sx={{ fontWeight: 500, color: '#2c3e50' }}>
+                              {item.phoneNumber}
+                            </Typography>
+                          </Box>
+                        )}
+                        
+                        {item.address && (
+                          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                            <Typography variant="body2" sx={{ color: 'text.secondary', fontSize: '0.75rem' }}>
+                              Address:
+                            </Typography>
+                            <Typography variant="body2" sx={{ fontWeight: 500, color: '#2c3e50', textAlign: 'right', maxWidth: '60%' }}>
+                              {item.address}
+                            </Typography>
+                          </Box>
+                        )}
+                        
                         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                           <Typography variant="body2" sx={{ color: 'text.secondary', fontSize: '0.75rem' }}>
                             Product:
@@ -1340,12 +1451,17 @@ const Payments = () => {
                               borderRadius: 1, 
                               overflow: 'hidden',
                               border: '1px solid #e0e0e0',
-                              cursor: 'pointer'
+                              cursor: 'pointer',
+                              '&:hover': {
+                                transform: 'scale(1.05)',
+                                boxShadow: '0 2px 8px rgba(0,0,0,0.2)'
+                              },
+                              transition: 'all 0.2s ease'
                             }}
-                            onClick={() => window.open(`${API_BASE_URL}/uploads/${item.image}`, '_blank')}
+                            onClick={() => handleImageClick(item.image)}
                             >
                               <img
-                                src={`${API_BASE_URL}/uploads/${item.image}`}
+                                src={getImageUrl(item.image)}
                                 alt="Payment Screenshot"
                                 style={{
                                   width: '100%',
@@ -1558,11 +1674,11 @@ const Payments = () => {
                               },
                               transition: 'all 0.2s ease'
                             }}
-                            onClick={() => window.open(`${API_BASE_URL}/uploads/${item.image}`, '_blank')}
+                            onClick={() => handleImageClick(item.image)}
                             title="Click to view full image"
                             >
                               <img
-                                src={`${API_BASE_URL}/uploads/${item.image}`}
+                                src={getImageUrl(item.image)}
                                 alt="Payment Screenshot"
                                 style={{
                                   width: '100%',
@@ -1907,6 +2023,16 @@ const Payments = () => {
                       <Typography variant="body1" sx={{ fontWeight: 500, color: '#2c3e50', mb: 0.5 }}>
                         {selectedTransaction.customerName}
                       </Typography>
+                      {selectedTransaction.phoneNumber && (
+                        <Typography variant="body2" sx={{ color: '#2c3e50', mb: 0.5 }}>
+                          Phone: {selectedTransaction.phoneNumber}
+                        </Typography>
+                      )}
+                      {selectedTransaction.address && (
+                        <Typography variant="body2" sx={{ color: '#2c3e50', mb: 0.5 }}>
+                          Address: {selectedTransaction.address}
+                        </Typography>
+                      )}
                       <Typography variant="caption" sx={{ color: 'text.secondary' }}>
                         Customer ID: {selectedTransaction._id}
                       </Typography>
@@ -1991,11 +2117,11 @@ const Payments = () => {
                       },
                       transition: 'all 0.3s ease'
                     }}
-                    onClick={() => window.open(`${API_BASE_URL}/uploads/${selectedTransaction.image}`, '_blank')}
+                    onClick={() => handleImageClick(selectedTransaction.image)}
                     title="Click to view full image"
                     >
                       <img
-                        src={`${API_BASE_URL}/uploads/${selectedTransaction.image}`}
+                        src={getImageUrl(selectedTransaction.image)}
                         alt="Payment Screenshot"
                         style={{
                           width: '100%',
@@ -2080,6 +2206,124 @@ const Payments = () => {
               Edit Transaction
             </Button>
           )}
+        </DialogActions>
+      </Dialog>
+
+      {/* Image Modal Dialog */}
+      <Dialog
+        open={openImageModal}
+        onClose={() => setOpenImageModal(false)}
+        maxWidth="lg"
+        fullWidth
+        fullScreen={isMobile}
+        PaperProps={{
+          sx: {
+            backgroundColor: 'rgba(0, 0, 0, 0.9)',
+            maxHeight: '90vh'
+          }
+        }}
+      >
+        <DialogTitle sx={{ 
+          display: 'flex', 
+          justifyContent: 'space-between', 
+          alignItems: 'center',
+          color: 'white',
+          pb: 1
+        }}>
+          <Typography variant="h6" sx={{ fontWeight: 600 }}>
+            Payment Screenshot
+          </Typography>
+          <IconButton
+            onClick={() => setOpenImageModal(false)}
+            sx={{ 
+              color: 'white',
+              '&:hover': {
+                backgroundColor: 'rgba(255, 255, 255, 0.1)'
+              }
+            }}
+          >
+            <CloseIcon />
+          </IconButton>
+        </DialogTitle>
+        <DialogContent sx={{ 
+          display: 'flex', 
+          justifyContent: 'center', 
+          alignItems: 'center',
+          p: isMobile ? 2 : 4,
+          backgroundColor: 'rgba(0, 0, 0, 0.9)'
+        }}>
+          {selectedImageUrl && (
+            <Box sx={{ 
+              position: 'relative',
+              maxWidth: '100%',
+              maxHeight: '80vh',
+              display: 'flex',
+              justifyContent: 'center',
+              alignItems: 'center'
+            }}>
+              <img
+                src={selectedImageUrl}
+                alt="Payment Screenshot Full Size"
+                style={{
+                  maxWidth: '100%',
+                  maxHeight: '80vh',
+                  objectFit: 'contain',
+                  borderRadius: 8
+                }}
+                onError={(e) => {
+                  e.target.style.display = 'none';
+                  e.target.nextSibling.style.display = 'flex';
+                }}
+              />
+              <Box sx={{ 
+                display: 'none',
+                width: '100%', 
+                minHeight: 200, 
+                alignItems: 'center', 
+                justifyContent: 'center',
+                backgroundColor: 'rgba(255, 255, 255, 0.1)',
+                borderRadius: 2,
+                p: 4
+              }}>
+                <Typography variant="h6" sx={{ color: 'white' }}>
+                  Image not available
+                </Typography>
+              </Box>
+            </Box>
+          )}
+        </DialogContent>
+        <DialogActions sx={{ 
+          p: 2, 
+          backgroundColor: 'rgba(0, 0, 0, 0.9)',
+          justifyContent: 'center'
+        }}>
+          <Button
+            onClick={() => window.open(selectedImageUrl, '_blank')}
+            variant="outlined"
+            sx={{
+              color: 'white',
+              borderColor: 'white',
+              '&:hover': {
+                borderColor: 'white',
+                backgroundColor: 'rgba(255, 255, 255, 0.1)'
+              }
+            }}
+          >
+            Open in New Tab
+          </Button>
+          <Button
+            onClick={() => setOpenImageModal(false)}
+            variant="contained"
+            sx={{
+              backgroundColor: 'white',
+              color: 'black',
+              '&:hover': {
+                backgroundColor: 'rgba(255, 255, 255, 0.9)'
+              }
+            }}
+          >
+            Close
+          </Button>
         </DialogActions>
       </Dialog>
 
