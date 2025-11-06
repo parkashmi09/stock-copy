@@ -101,12 +101,23 @@ const Dashboard = ({ user, onLogout }) => {
 
   const drawerWidth = isMobile ? 240 : 280
 
-  const menuItems = [
-    { text: 'Dashboard', icon: <DashboardIcon />, path: '/dashboard' },
-    { text: 'Stock Management', icon: <InventoryIcon />, path: '/dashboard/stock-management' },
-    { text: 'Categories', icon: <CategoryIcon />, path: '/dashboard/categories' },
-    { text: 'Payments', icon: <PaymentIcon />, path: '/dashboard/payments' }
-  ]
+  // Check if user is admin
+  const isAdmin = () => {
+    return user?.role === 'admin';
+  };
+
+  // Filter menu items based on user role
+  const allMenuItems = [
+    { text: 'Dashboard', icon: <DashboardIcon />, path: '/dashboard', roles: ['admin', 'staff'] },
+    { text: 'Stock Management', icon: <InventoryIcon />, path: '/dashboard/stock-management', roles: ['admin'] },
+    { text: 'Categories', icon: <CategoryIcon />, path: '/dashboard/categories', roles: ['admin'] },
+    { text: 'Payments', icon: <PaymentIcon />, path: '/dashboard/payments', roles: ['admin', 'staff'] }
+  ];
+
+  // Filter menu items based on user role
+  const menuItems = allMenuItems.filter(item => 
+    item.roles.includes(user?.role || 'staff')
+  )
 
   const handleDrawerToggle = () => {
     setMobileOpen(!mobileOpen);

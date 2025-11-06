@@ -92,7 +92,8 @@ const Payments = () => {
     amountPaid: '',
     paymentType: 'online',
     address: '',
-    phoneNumber: ''
+    phoneNumber: '',
+    note: ''
   });
 
   // Edit payment form state
@@ -102,7 +103,8 @@ const Payments = () => {
     amountPaid: '',
     paymentType: 'online',
     address: '',
-    phoneNumber: ''
+    phoneNumber: '',
+    note: ''
   });
 
   // Fetch transactions and products on component mount
@@ -264,6 +266,7 @@ const Payments = () => {
       formData.append('paymentType', newPayment.paymentType);
       formData.append('address', newPayment.address);
       formData.append('phoneNumber', newPayment.phoneNumber);
+      formData.append('note', newPayment.note || '');
       
       if (screenshotFile) {
         formData.append('image', screenshotFile);
@@ -289,7 +292,8 @@ const Payments = () => {
           amountPaid: '',
           paymentType: 'online',
           address: '',
-          phoneNumber: ''
+          phoneNumber: '',
+          note: ''
         });
         removeScreenshot();
         setOpenAddPayment(false);
@@ -324,7 +328,8 @@ const Payments = () => {
       amountPaid: transaction.amountPaid.toString(),
       paymentType: transaction.paymentType,
       address: transaction.address || '',
-      phoneNumber: transaction.phoneNumber || ''
+      phoneNumber: transaction.phoneNumber || '',
+      note: transaction.note || ''
     });
     setOpenEditDialog(true);
   };
@@ -363,7 +368,8 @@ const Payments = () => {
           amountPaid: parseFloat(editPayment.amountPaid),
           paymentType: editPayment.paymentType,
           address: editPayment.address,
-          phoneNumber: editPayment.phoneNumber
+          phoneNumber: editPayment.phoneNumber,
+          note: editPayment.note || ''
         })
       });
 
@@ -388,6 +394,11 @@ const Payments = () => {
 
   // Handle delete transaction
   const handleDeleteTransaction = (transaction) => {
+    // Only allow admins to delete
+    if (!isAdmin()) {
+      showNotification('Only admin users can delete transactions', 'error');
+      return;
+    }
     setSelectedTransaction(transaction);
     setOpenDeleteDialog(true);
   };
@@ -845,6 +856,19 @@ const Payments = () => {
                 </Select>
               </FormControl>
             </Grid>
+            <Grid item xs={12}>
+              <TextField
+                fullWidth
+                label="Note"
+                value={newPayment.note}
+                onChange={(e) => setNewPayment({ ...newPayment, note: e.target.value })}
+                variant="outlined"
+                placeholder="Enter any additional notes (optional)"
+                multiline
+                rows={3}
+                size={isMobile ? "small" : "medium"}
+              />
+            </Grid>
             
             {/* Screenshot Upload Section */}
             <Grid item xs={12}>
@@ -1059,6 +1083,19 @@ const Payments = () => {
                   <MenuItem value="manual">Manual</MenuItem>
                 </Select>
               </FormControl>
+            </Grid>
+            <Grid item xs={12}>
+              <TextField
+                fullWidth
+                label="Note"
+                value={editPayment.note}
+                onChange={(e) => setEditPayment({ ...editPayment, note: e.target.value })}
+                variant="outlined"
+                placeholder="Enter any additional notes (optional)"
+                multiline
+                rows={3}
+                size={isMobile ? "small" : "medium"}
+              />
             </Grid>
           </Grid>
         </DialogContent>
@@ -1324,21 +1361,23 @@ const Payments = () => {
                           >
                             <EditIcon sx={{ fontSize: 16 }} />
                           </IconButton>
-                          <IconButton 
-                            size="small" 
-                            onClick={() => handleDeleteTransaction(item)}
-                            sx={{ 
-                              color: '#e74c3c',
-                              backgroundColor: 'rgba(231, 76, 60, 0.1)',
-                              width: 28,
-                              height: 28,
-                              '&:hover': { 
-                                backgroundColor: 'rgba(231, 76, 60, 0.2)'
-                              }
-                            }}
-                          >
-                            <DeleteIcon sx={{ fontSize: 16 }} />
-                          </IconButton>
+                          {isAdmin() && (
+                            <IconButton 
+                              size="small" 
+                              onClick={() => handleDeleteTransaction(item)}
+                              sx={{ 
+                                color: '#e74c3c',
+                                backgroundColor: 'rgba(231, 76, 60, 0.1)',
+                                width: 28,
+                                height: 28,
+                                '&:hover': { 
+                                  backgroundColor: 'rgba(231, 76, 60, 0.2)'
+                                }
+                              }}
+                            >
+                              <DeleteIcon sx={{ fontSize: 16 }} />
+                            </IconButton>
+                          )}
                         </Box>
                       </Box>
                       
@@ -1371,6 +1410,17 @@ const Payments = () => {
                             </Typography>
                             <Typography variant="body2" sx={{ fontWeight: 500, color: '#2c3e50', textAlign: 'right', maxWidth: '60%' }}>
                               {item.address}
+                            </Typography>
+                          </Box>
+                        )}
+                        
+                        {item.note && (
+                          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                            <Typography variant="body2" sx={{ color: 'text.secondary', fontSize: '0.75rem' }}>
+                              Note:
+                            </Typography>
+                            <Typography variant="body2" sx={{ fontWeight: 500, color: '#2c3e50', textAlign: 'right', maxWidth: '60%' }}>
+                              {item.note}
                             </Typography>
                           </Box>
                         )}
@@ -1543,6 +1593,9 @@ const Payments = () => {
                           Payment Type
                         </TableCell>
                         <TableCell sx={{ fontWeight: 700, color: '#2c3e50', fontSize: '0.75rem', width: 120, maxWidth: 120, padding: '8px 4px' }}>
+                          Note
+                        </TableCell>
+                        <TableCell sx={{ fontWeight: 700, color: '#2c3e50', fontSize: '0.75rem', width: 120, maxWidth: 120, padding: '8px 4px' }}>
                           Status
                         </TableCell>
                         <TableCell sx={{ fontWeight: 700, color: '#2c3e50', fontSize: '0.75rem', width: 70, maxWidth: 70, padding: '8px 4px' }}>
@@ -1632,6 +1685,18 @@ const Payments = () => {
                         </TableCell>
                         <TableCell sx={{ width: 90, maxWidth: 90, padding: '8px 4px' }}>
                           {getTypeChip(item.paymentType)}
+                        </TableCell>
+                        <TableCell sx={{ width: 120, maxWidth: 120, padding: '8px 4px' }}>
+                          <Typography variant="body2" sx={{ 
+                            fontWeight: 500, 
+                            color: '#2c3e50',
+                            fontSize: '0.7rem',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap'
+                          }} title={item.note || 'No note'}>
+                            {item.note || '-'}
+                          </Typography>
                         </TableCell>
                         <TableCell sx={{ width: 120, maxWidth: 120, padding: '8px 4px' }}>
                           {editingStatusId === item._id ? (
@@ -1752,31 +1817,33 @@ const Payments = () => {
                             >
                               <EditIcon sx={{ fontSize: 16 }} />
                             </IconButton>
-                            <IconButton 
-                              size="small" 
-                              onClick={() => handleDeleteTransaction(item)}
-                              sx={{ 
-                                color: '#e74c3c',
-                                backgroundColor: 'rgba(231, 76, 60, 0.1)',
-                                width: 24,
-                                height: 24,
-                                '&:hover': { 
-                                  backgroundColor: 'rgba(231, 76, 60, 0.2)',
-                                  transform: 'scale(1.1)'
-                                },
-                                transition: 'all 0.2s ease'
-                              }}
-                              title="Delete Transaction"
-                            >
-                              <DeleteIcon sx={{ fontSize: 16 }} />
-                            </IconButton>
+                            {isAdmin() && (
+                              <IconButton 
+                                size="small" 
+                                onClick={() => handleDeleteTransaction(item)}
+                                sx={{ 
+                                  color: '#e74c3c',
+                                  backgroundColor: 'rgba(231, 76, 60, 0.1)',
+                                  width: 24,
+                                  height: 24,
+                                  '&:hover': { 
+                                    backgroundColor: 'rgba(231, 76, 60, 0.2)',
+                                    transform: 'scale(1.1)'
+                                  },
+                                  transition: 'all 0.2s ease'
+                                }}
+                                title="Delete Transaction"
+                              >
+                                <DeleteIcon sx={{ fontSize: 16 }} />
+                              </IconButton>
+                            )}
                           </Box>
                         </TableCell>
                       </TableRow>
                     ))}
                     {getFilteredTransactions().length === 0 && (
                       <TableRow>
-                        <TableCell colSpan={9} sx={{ textAlign: 'center', py: 4 }}>
+                        <TableCell colSpan={10} sx={{ textAlign: 'center', py: 4 }}>
                           <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
                             <ReceiptIcon sx={{ fontSize: 64, color: '#ccc', mb: 2 }} />
                             <Typography variant="h6" sx={{ color: 'text.secondary', mb: 1 }}>
@@ -2031,6 +2098,11 @@ const Payments = () => {
                       {selectedTransaction.address && (
                         <Typography variant="body2" sx={{ color: '#2c3e50', mb: 0.5 }}>
                           Address: {selectedTransaction.address}
+                        </Typography>
+                      )}
+                      {selectedTransaction.note && (
+                        <Typography variant="body2" sx={{ color: '#2c3e50', mb: 0.5 }}>
+                          Note: {selectedTransaction.note}
                         </Typography>
                       )}
                       <Typography variant="caption" sx={{ color: 'text.secondary' }}>
