@@ -83,13 +83,13 @@ const Payments = () => {
   const [totalTransactions, setTotalTransactions] = useState(0);
   const [totalPages, setTotalPages] = useState(0);
   const [editingStatusId, setEditingStatusId] = useState(null);
+  const [selectedProductId, setSelectedProductId] = useState('');
 
   // New payment form state
   const [newPayment, setNewPayment] = useState({
     transactionId: '',
     customerName: '',
-    productId: '',
-    amountPaid: '',
+    products: [], // Array of { productId, productName, quantity, price }
     paymentType: 'online',
     address: '',
     phoneNumber: '',
@@ -99,13 +99,13 @@ const Payments = () => {
   // Edit payment form state
   const [editPayment, setEditPayment] = useState({
     customerName: '',
-    productId: '',
-    amountPaid: '',
+    products: [], // Array of { productId, productName, quantity, price }
     paymentType: 'online',
     address: '',
     phoneNumber: '',
     note: ''
   });
+  const [selectedEditProductId, setSelectedEditProductId] = useState('');
 
   // Fetch transactions and products on component mount
   useEffect(() => {
@@ -161,7 +161,8 @@ const Payments = () => {
           setTotalPages(1);
         }
       } else {
-        showNotification(data.message || 'Failed to fetch transactions', 'error');
+        const errorMessage = data.error || data.message || 'Failed to fetch transactions';
+        showNotification(errorMessage, 'error');
       }
     } catch (error) {
       console.error('Error fetching transactions:', error);
@@ -188,8 +189,10 @@ const Payments = () => {
         const data = await response.json();
         setProducts(data);
       } else {
-        console.error('Failed to fetch products');
-        showNotification('Failed to load products', 'error');
+        const data = await response.json();
+        const errorMessage = data.error || data.message || 'Failed to load products';
+        console.error('Failed to fetch products:', errorMessage);
+        showNotification(errorMessage, 'error');
       }
     } catch (error) {
       console.error('Error fetching products:', error);
@@ -231,23 +234,101 @@ const Payments = () => {
     return products.find(product => product._id === productId);
   };
 
+  // Get products display - handle both products array and productName (legacy)
+  const getProductsDisplay = (transaction) => {
+    if (transaction.products && transaction.products.length > 0) {
+      return transaction.products;
+    }
+    // Legacy format - single productName
+    if (transaction.productName) {
+      return [{
+        productName: transaction.productName,
+        quantity: 1,
+        price: transaction.amountPaid || 0
+      }];
+    }
+    return [];
+  };
+
+  // Get products summary text for display
+  const getProductsSummary = (transaction) => {
+    const productsList = getProductsDisplay(transaction);
+    if (productsList.length === 0) return 'No products';
+    if (productsList.length === 1) {
+      return `${productsList[0].productName}${productsList[0].quantity > 1 ? ` (x${productsList[0].quantity})` : ''}`;
+    }
+    return `${productsList.length} products`;
+  };
+
+  // Calculate total amount from products
+  const calculateTotalAmount = (productsList) => {
+    return productsList.reduce((total, product) => {
+      const quantity = parseInt(product.quantity) || 0; // Convert to number for calculation, use 0 if empty
+      const price = product.price || 0; // Use 0 if price is undefined
+      return total + (price * quantity);
+    }, 0);
+  };
+
+  // Add product to the list
+  const addProduct = (productId) => {
+    const product = getSelectedProduct(productId);
+    if (!product) return;
+
+    // Check if product already exists
+    const existingIndex = newPayment.products.findIndex(p => p.productId === productId);
+    if (existingIndex >= 0) {
+      // Increment quantity if product already exists
+      const updatedProducts = [...newPayment.products];
+      const currentQty = parseInt(updatedProducts[existingIndex].quantity) || 0;
+      updatedProducts[existingIndex].quantity = (currentQty + 1).toString();
+      setNewPayment({ ...newPayment, products: updatedProducts });
+    } else {
+      // Add new product with empty quantity (user will enter it)
+      setNewPayment({
+        ...newPayment,
+        products: [...newPayment.products, {
+          productId: product._id,
+          productName: product.name,
+          quantity: '', // Empty initially, user will enter
+          price: product.price
+        }]
+      });
+    }
+  };
+
+  // Remove product from the list
+  const removeProduct = (index) => {
+    const updatedProducts = newPayment.products.filter((_, i) => i !== index);
+    setNewPayment({ ...newPayment, products: updatedProducts });
+  };
+
+  // Update product quantity
+  const updateProductQuantity = (index, quantity) => {
+    // Store as string in state (can be empty), will convert to number in payload
+    const updatedProducts = [...newPayment.products];
+    updatedProducts[index].quantity = quantity; // Keep as string, can be empty
+    setNewPayment({ ...newPayment, products: updatedProducts });
+  };
+
   // Create new transaction
   const createTransaction = async () => {
     if (!newPayment.transactionId.trim() || !newPayment.customerName.trim() || 
-        !newPayment.productId || !newPayment.amountPaid.trim() ||
+        newPayment.products.length === 0 ||
         !newPayment.address.trim() || !newPayment.phoneNumber.trim()) {
-      showNotification('Please fill in all required fields', 'error');
+      showNotification('Please fill in all required fields and add at least one product', 'error');
       return;
     }
 
-    if (isNaN(parseFloat(newPayment.amountPaid))) {
-      showNotification('Amount must be a valid number', 'error');
+    // Check if all products have valid quantities
+    const productsWithQuantity = newPayment.products.filter(p => p.quantity && parseInt(p.quantity) > 0);
+    if (productsWithQuantity.length === 0) {
+      showNotification('Please enter quantity for at least one product', 'error');
       return;
     }
 
-    const selectedProduct = getSelectedProduct(newPayment.productId);
-    if (!selectedProduct) {
-      showNotification('Please select a valid product', 'error');
+    const totalAmount = calculateTotalAmount(newPayment.products);
+    if (totalAmount <= 0) {
+      showNotification('Total amount must be greater than 0. Please enter valid quantities.', 'error');
       return;
     }
 
@@ -261,8 +342,17 @@ const Payments = () => {
       const formData = new FormData();
       formData.append('transactionId', newPayment.transactionId);
       formData.append('customerName', newPayment.customerName);
-      formData.append('productName', selectedProduct.name);
-      formData.append('amountPaid', parseFloat(newPayment.amountPaid));
+      
+      // Add products array as JSON - convert quantity to number
+      const productsPayload = newPayment.products
+        .filter(p => p.quantity && parseInt(p.quantity) > 0) // Filter out products with no quantity
+        .map(p => ({
+          productName: p.productName,
+          quantity: parseInt(p.quantity) // Convert string to number
+        }));
+      formData.append('products', JSON.stringify(productsPayload));
+      
+      formData.append('amountPaid', totalAmount);
       formData.append('paymentType', newPayment.paymentType);
       formData.append('address', newPayment.address);
       formData.append('phoneNumber', newPayment.phoneNumber);
@@ -288,18 +378,19 @@ const Payments = () => {
         setNewPayment({
           transactionId: '',
           customerName: '',
-          productId: '',
-          amountPaid: '',
+          products: [],
           paymentType: 'online',
           address: '',
           phoneNumber: '',
           note: ''
         });
         removeScreenshot();
+        setSelectedProductId('');
         setOpenAddPayment(false);
         showNotification('Transaction created successfully!', 'success');
       } else {
-        showNotification(data.message || 'Failed to create transaction', 'error');
+        const errorMessage = data.error || data.message || 'Failed to create transaction';
+        showNotification(errorMessage, 'error');
       }
     } catch (error) {
       console.error('Transaction creation error:', error);
@@ -319,13 +410,23 @@ const Payments = () => {
   const handleEditTransaction = (transaction) => {
     setSelectedTransaction(transaction);
     
-    // Find the product by name for editing
-    const product = products.find(p => p.name === transaction.productName);
+    // Handle both products array and legacy productName format
+    const productsList = getProductsDisplay(transaction);
+    
+    // Convert products to edit format
+    const editProducts = productsList.map(p => {
+      const product = products.find(prod => prod.name === p.productName);
+      return {
+        productId: product?._id || '',
+        productName: p.productName,
+        quantity: p.quantity.toString(),
+        price: p.price
+      };
+    });
     
     setEditPayment({
       customerName: transaction.customerName,
-      productId: product?._id || '',
-      amountPaid: transaction.amountPaid.toString(),
+      products: editProducts,
       paymentType: transaction.paymentType,
       address: transaction.address || '',
       phoneNumber: transaction.phoneNumber || '',
@@ -334,28 +435,75 @@ const Payments = () => {
     setOpenEditDialog(true);
   };
 
+  // Add product to edit form
+  const addEditProduct = (productId) => {
+    const product = getSelectedProduct(productId);
+    if (!product) return;
+
+    const existingIndex = editPayment.products.findIndex(p => p.productId === productId);
+    if (existingIndex >= 0) {
+      const updatedProducts = [...editPayment.products];
+      const currentQty = parseInt(updatedProducts[existingIndex].quantity) || 0;
+      updatedProducts[existingIndex].quantity = (currentQty + 1).toString();
+      setEditPayment({ ...editPayment, products: updatedProducts });
+    } else {
+      setEditPayment({
+        ...editPayment,
+        products: [...editPayment.products, {
+          productId: product._id,
+          productName: product.name,
+          quantity: '',
+          price: product.price
+        }]
+      });
+    }
+  };
+
+  // Remove product from edit form
+  const removeEditProduct = (index) => {
+    const updatedProducts = editPayment.products.filter((_, i) => i !== index);
+    setEditPayment({ ...editPayment, products: updatedProducts });
+  };
+
+  // Update product quantity in edit form
+  const updateEditProductQuantity = (index, quantity) => {
+    const updatedProducts = [...editPayment.products];
+    updatedProducts[index].quantity = quantity;
+    setEditPayment({ ...editPayment, products: updatedProducts });
+  };
+
   // Update transaction
   const updateTransaction = async () => {
-    if (!editPayment.customerName.trim() || !editPayment.productId || !editPayment.amountPaid.trim() ||
+    if (!editPayment.customerName.trim() || editPayment.products.length === 0 ||
         !editPayment.address.trim() || !editPayment.phoneNumber.trim()) {
-      showNotification('Please fill in all required fields', 'error');
+      showNotification('Please fill in all required fields and add at least one product', 'error');
       return;
     }
 
-    if (isNaN(parseFloat(editPayment.amountPaid))) {
-      showNotification('Amount must be a valid number', 'error');
+    const productsWithQuantity = editPayment.products.filter(p => p.quantity && parseInt(p.quantity) > 0);
+    if (productsWithQuantity.length === 0) {
+      showNotification('Please enter quantity for at least one product', 'error');
       return;
     }
 
-    const selectedProduct = getSelectedProduct(editPayment.productId);
-    if (!selectedProduct) {
-      showNotification('Please select a valid product', 'error');
+    const totalAmount = calculateTotalAmount(editPayment.products);
+    if (totalAmount <= 0) {
+      showNotification('Total amount must be greater than 0. Please enter valid quantities.', 'error');
       return;
     }
 
     setIsLoading(true);
     try {
       const token = localStorage.getItem('token');
+      
+      // Prepare products payload
+      const productsPayload = editPayment.products
+        .filter(p => p.quantity && parseInt(p.quantity) > 0)
+        .map(p => ({
+          productName: p.productName,
+          quantity: parseInt(p.quantity)
+        }));
+
       const response = await fetch(`${API_ENDPOINTS.TRANSACTIONS}/${selectedTransaction._id}`, {
         method: 'PUT',
         headers: {
@@ -364,8 +512,8 @@ const Payments = () => {
         },
         body: JSON.stringify({
           customerName: editPayment.customerName,
-          productName: selectedProduct.name,
-          amountPaid: parseFloat(editPayment.amountPaid),
+          products: productsPayload,
+          amountPaid: totalAmount,
           paymentType: editPayment.paymentType,
           address: editPayment.address,
           phoneNumber: editPayment.phoneNumber,
@@ -379,10 +527,12 @@ const Payments = () => {
         // Refresh transactions after update
         await fetchTransactions(currentPage, pageSize);
         setOpenEditDialog(false);
+        setSelectedEditProductId('');
         setSelectedTransaction(null);
         showNotification('Transaction updated successfully!', 'success');
       } else {
-        showNotification(data.message || 'Failed to update transaction', 'error');
+        const errorMessage = data.error || data.message || 'Failed to update transaction';
+        showNotification(errorMessage, 'error');
       }
     } catch (error) {
       console.error('Transaction update error:', error);
@@ -424,7 +574,8 @@ const Payments = () => {
         showNotification('Transaction deleted successfully!', 'success');
       } else {
         const data = await response.json();
-        showNotification(data.message || 'Failed to delete transaction', 'error');
+        const errorMessage = data.error || data.message || 'Failed to delete transaction';
+        showNotification(errorMessage, 'error');
       }
     } catch (error) {
       console.error('Transaction deletion error:', error);
@@ -596,7 +747,8 @@ const Payments = () => {
         setEditingStatusId(null); // Close the dropdown
         showNotification(`Transaction status updated to ${newStatus}!`, 'success');
       } else {
-        showNotification(data.message || 'Failed to update transaction status', 'error');
+        const errorMessage = data.error || data.message || 'Failed to update transaction status';
+        showNotification(errorMessage, 'error');
       }
     } catch (error) {
       console.error('Transaction status update error:', error);
@@ -728,7 +880,10 @@ const Payments = () => {
       {/* Add Payment Dialog */}
       <Dialog 
         open={openAddPayment} 
-        onClose={() => setOpenAddPayment(false)} 
+        onClose={() => {
+          setOpenAddPayment(false);
+          setSelectedProductId('');
+        }} 
         maxWidth="md" 
         fullWidth
         fullScreen={isMobile}
@@ -795,54 +950,98 @@ const Payments = () => {
                 size={isMobile ? "small" : "medium"}
               />
             </Grid>
-            <Grid item xs={12} md={6}>
-              <FormControl fullWidth>
-                <InputLabel>Select Product</InputLabel>
-                <Select
-                  value={newPayment.productId}
-                  onChange={(e) => {
-                    const selectedProduct = getSelectedProduct(e.target.value);
-                    setNewPayment({ 
-                      ...newPayment, 
-                      productId: e.target.value,
-                      amountPaid: selectedProduct ? selectedProduct.price.toString() : ''
-                    });
-                  }}
-                  label="Select Product"
-                  required
-                  disabled={isFetchingProducts}
-                  size={isMobile ? "small" : "medium"}
-                >
-                  {products.map((product) => (
-                    <MenuItem key={product._id} value={product._id}>
-                      <Box sx={{ display: 'flex', justifyContent: 'space-between', width: '100%' }}>
-                        <Typography variant="body2">{product.name}</Typography>
-                        <Typography variant="body2" sx={{ color: 'text.secondary', ml: 2 }}>
-                          ₹{product.price.toLocaleString()}
-                        </Typography>
+            {/* Product Selection */}
+            <Grid item xs={12}>
+              <Typography variant={isMobile ? "subtitle1" : "h6"} sx={{ mb: 2, color: '#2c3e50', fontWeight: 600 }}>
+                Products
+              </Typography>
+              <Box sx={{ display: 'flex', gap: 2, mb: 2, flexWrap: 'wrap' }}>
+                <FormControl sx={{ minWidth: isMobile ? '100%' : 250 }}>
+                  <InputLabel>Select Product</InputLabel>
+                  <Select
+                    value={selectedProductId}
+                    onChange={(e) => {
+                      if (e.target.value) {
+                        addProduct(e.target.value);
+                        setSelectedProductId(''); // Reset selection
+                      }
+                    }}
+                    label="Select Product"
+                    disabled={isFetchingProducts}
+                    size={isMobile ? "small" : "medium"}
+                  >
+                    {products.map((product) => (
+                      <MenuItem key={product._id} value={product._id}>
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', width: '100%' }}>
+                          <Typography variant="body2">{product.name}</Typography>
+                          <Typography variant="body2" sx={{ color: 'text.secondary', ml: 2 }}>
+                            ₹{(product.price || 0).toLocaleString()}
+                          </Typography>
+                        </Box>
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              </Box>
+
+              {/* Selected Products List */}
+              {newPayment.products.length > 0 && (
+                <Box sx={{ mb: 2 }}>
+                  {newPayment.products.map((product, index) => (
+                    <Card key={index} sx={{ mb: 1.5, p: 2, backgroundColor: '#f8f9fa' }}>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
+                        <Box sx={{ flex: 1, minWidth: 150 }}>
+                          <Typography variant="body2" sx={{ fontWeight: 600, color: '#2c3e50', mb: 0.5 }}>
+                            {product.productName}
+                          </Typography>
+                          <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                            ₹{(product.price || 0).toLocaleString()} per unit
+                          </Typography>
+                        </Box>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                          <TextField
+                            label="Quantity"
+                            value={product.quantity}
+                            onChange={(e) => {
+                              const value = e.target.value;
+                              // Allow only numbers or empty string
+                              if (value === '' || /^\d+$/.test(value)) {
+                                updateProductQuantity(index, value);
+                              }
+                            }}
+                            placeholder="Enter quantity"
+                            size="small"
+                            inputProps={{ style: { width: 60, textAlign: 'center' } }}
+                            sx={{ width: 100 }}
+                          />
+                          <Typography variant="body2" sx={{ fontWeight: 600, color: '#f39c12', minWidth: 80 }}>
+                            = ₹{((product.price || 0) * (parseInt(product.quantity) || 0)).toLocaleString()}
+                          </Typography>
+                          <IconButton
+                            size="small"
+                            onClick={() => removeProduct(index)}
+                            sx={{ color: '#e74c3c' }}
+                          >
+                            <DeleteIcon />
+                          </IconButton>
+                        </Box>
                       </Box>
-                    </MenuItem>
+                    </Card>
                   ))}
-                </Select>
-              </FormControl>
+                  <Box sx={{ mt: 2, p: 2, backgroundColor: '#e3f2fd', borderRadius: 1, border: '1px solid #2196f3' }}>
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <Typography variant="h6" sx={{ fontWeight: 700, color: '#2c3e50' }}>
+                        Total Amount:
+                      </Typography>
+                      <Typography variant="h6" sx={{ fontWeight: 700, color: '#f39c12' }}>
+                        ₹{calculateTotalAmount(newPayment.products).toLocaleString()}
+                      </Typography>
+                    </Box>
+                  </Box>
+                </Box>
+              )}
             </Grid>
-            <Grid item xs={12} md={3}>
-              <TextField
-                fullWidth
-                label="Amount Paid"
-                value={newPayment.amountPaid}
-                onChange={(e) => setNewPayment({ ...newPayment, amountPaid: e.target.value })}
-                variant="outlined"
-                required
-                type="number"
-                InputProps={{
-                  startAdornment: <InputAdornment position="start">₹</InputAdornment>,
-                }}
-                placeholder="0"
-                size={isMobile ? "small" : "medium"}
-              />
-            </Grid>
-            <Grid item xs={12} md={3}>
+            <Grid item xs={12} md={6}>
               <FormControl fullWidth>
                 <InputLabel>Payment Type</InputLabel>
                 <Select
@@ -941,7 +1140,10 @@ const Payments = () => {
         </DialogContent>
         <DialogActions sx={{ p: isMobile ? 2 : 3 }}>
           <Button 
-            onClick={() => setOpenAddPayment(false)}
+            onClick={() => {
+              setOpenAddPayment(false);
+              setSelectedProductId('');
+            }}
             sx={{ color: '#666' }}
             size={isMobile ? "small" : "medium"}
           >
@@ -950,7 +1152,7 @@ const Payments = () => {
           <Button 
             onClick={createTransaction}
             disabled={isLoading || !newPayment.transactionId.trim() || !newPayment.customerName.trim() || 
-                     !newPayment.productId || !newPayment.amountPaid.trim() ||
+                     newPayment.products.length === 0 ||
                      !newPayment.address.trim() || !newPayment.phoneNumber.trim()}
             variant="contained"
             startIcon={<CheckIcon />}
@@ -970,7 +1172,10 @@ const Payments = () => {
       {/* Edit Transaction Dialog */}
       <Dialog 
         open={openEditDialog} 
-        onClose={() => setOpenEditDialog(false)} 
+        onClose={() => {
+          setOpenEditDialog(false);
+          setSelectedEditProductId('');
+        }} 
         maxWidth="md" 
         fullWidth
         fullScreen={isMobile}
@@ -1024,51 +1229,95 @@ const Payments = () => {
                 size={isMobile ? "small" : "medium"}
               />
             </Grid>
-            <Grid item xs={12} md={6}>
-              <FormControl fullWidth>
-                <InputLabel>Select Product</InputLabel>
-                <Select
-                  value={editPayment.productId}
-                  onChange={(e) => {
-                    const selectedProduct = getSelectedProduct(e.target.value);
-                    setEditPayment({ 
-                      ...editPayment, 
-                      productId: e.target.value,
-                      amountPaid: selectedProduct ? selectedProduct.price.toString() : editPayment.amountPaid
-                    });
-                  }}
-                  label="Select Product"
-                  required
-                  disabled={isFetchingProducts}
-                  size={isMobile ? "small" : "medium"}
-                >
-                  {products.map((product) => (
-                    <MenuItem key={product._id} value={product._id}>
-                      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
-                        <Typography variant="body2">{product.name}</Typography>
-                        <Typography variant="body2" sx={{ color: 'text.secondary', ml: 2 }}>
-                          ₹{product.price.toLocaleString()}
-                        </Typography>
+            {/* Product Selection */}
+            <Grid item xs={12}>
+              <Typography variant={isMobile ? "subtitle1" : "h6"} sx={{ mb: 2, color: '#2c3e50', fontWeight: 600 }}>
+                Products
+              </Typography>
+              <Box sx={{ display: 'flex', gap: 2, mb: 2, flexWrap: 'wrap' }}>
+                <FormControl sx={{ minWidth: isMobile ? '100%' : 250 }}>
+                  <InputLabel>Select Product</InputLabel>
+                  <Select
+                    value={selectedEditProductId}
+                    onChange={(e) => {
+                      if (e.target.value) {
+                        addEditProduct(e.target.value);
+                        setSelectedEditProductId('');
+                      }
+                    }}
+                    label="Select Product"
+                    disabled={isFetchingProducts}
+                    size={isMobile ? "small" : "medium"}
+                  >
+                    {products.map((product) => (
+                      <MenuItem key={product._id} value={product._id}>
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', width: '100%' }}>
+                          <Typography variant="body2">{product.name}</Typography>
+                          <Typography variant="body2" sx={{ color: 'text.secondary', ml: 2 }}>
+                            ₹{(product.price || 0).toLocaleString()}
+                          </Typography>
+                        </Box>
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              </Box>
+
+              {/* Selected Products List */}
+              {editPayment.products.length > 0 && (
+                <Box sx={{ mb: 2 }}>
+                  {editPayment.products.map((product, index) => (
+                    <Card key={index} sx={{ mb: 1.5, p: 2, backgroundColor: '#f8f9fa' }}>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
+                        <Box sx={{ flex: 1, minWidth: 150 }}>
+                          <Typography variant="body2" sx={{ fontWeight: 600, color: '#2c3e50', mb: 0.5 }}>
+                            {product.productName}
+                          </Typography>
+                          <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                            ₹{(product.price || 0).toLocaleString()} per unit
+                          </Typography>
+                        </Box>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                          <TextField
+                            label="Quantity"
+                            value={product.quantity}
+                            onChange={(e) => {
+                              const value = e.target.value;
+                              if (value === '' || /^\d+$/.test(value)) {
+                                updateEditProductQuantity(index, value);
+                              }
+                            }}
+                            placeholder="Enter quantity"
+                            size="small"
+                            inputProps={{ style: { width: 60, textAlign: 'center' } }}
+                            sx={{ width: 100 }}
+                          />
+                          <Typography variant="body2" sx={{ fontWeight: 600, color: '#f39c12', minWidth: 80 }}>
+                            = ₹{((product.price || 0) * (parseInt(product.quantity) || 0)).toLocaleString()}
+                          </Typography>
+                          <IconButton
+                            size="small"
+                            onClick={() => removeEditProduct(index)}
+                            sx={{ color: '#e74c3c' }}
+                          >
+                            <DeleteIcon />
+                          </IconButton>
+                        </Box>
                       </Box>
-                    </MenuItem>
+                    </Card>
                   ))}
-                </Select>
-              </FormControl>
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <TextField
-                fullWidth
-                label="Amount Paid"
-                value={editPayment.amountPaid}
-                onChange={(e) => setEditPayment({ ...editPayment, amountPaid: e.target.value })}
-                variant="outlined"
-                required
-                type="number"
-                InputProps={{
-                  startAdornment: <InputAdornment position="start">₹</InputAdornment>,
-                }}
-                size={isMobile ? "small" : "medium"}
-              />
+                  <Box sx={{ mt: 2, p: 2, backgroundColor: '#e3f2fd', borderRadius: 1, border: '1px solid #2196f3' }}>
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <Typography variant="h6" sx={{ fontWeight: 700, color: '#2c3e50' }}>
+                        Total Amount:
+                      </Typography>
+                      <Typography variant="h6" sx={{ fontWeight: 700, color: '#f39c12' }}>
+                        ₹{calculateTotalAmount(editPayment.products).toLocaleString()}
+                      </Typography>
+                    </Box>
+                  </Box>
+                </Box>
+              )}
             </Grid>
             <Grid item xs={12} md={6}>
               <FormControl fullWidth>
@@ -1101,7 +1350,10 @@ const Payments = () => {
         </DialogContent>
         <DialogActions sx={{ p: isMobile ? 2 : 3 }}>
           <Button 
-            onClick={() => setOpenEditDialog(false)}
+            onClick={() => {
+              setOpenEditDialog(false);
+              setSelectedEditProductId('');
+            }}
             sx={{ color: '#666' }}
             size={isMobile ? "small" : "medium"}
           >
@@ -1110,7 +1362,7 @@ const Payments = () => {
           <Button 
             onClick={updateTransaction}
             disabled={isLoading || !editPayment.customerName.trim() || 
-                     !editPayment.productId || !editPayment.amountPaid.trim() ||
+                     editPayment.products.length === 0 ||
                      !editPayment.address.trim() || !editPayment.phoneNumber.trim()}
             variant="contained"
             startIcon={<CheckIcon />}
@@ -1425,13 +1677,20 @@ const Payments = () => {
                           </Box>
                         )}
                         
-                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
                           <Typography variant="body2" sx={{ color: 'text.secondary', fontSize: '0.75rem' }}>
-                            Product:
+                            Products:
                           </Typography>
-                          <Typography variant="body2" sx={{ fontWeight: 500, color: '#2c3e50' }}>
-                            {item.productName}
-                          </Typography>
+                          {getProductsDisplay(item).map((product, idx) => (
+                            <Box key={idx} sx={{ pl: 1, borderLeft: '2px solid #667eea' }}>
+                              <Typography variant="body2" sx={{ fontWeight: 500, color: '#2c3e50' }}>
+                                {product.productName}
+                              </Typography>
+                              <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                                Qty: {product.quantity || 1} × ₹{(product.price || 0).toLocaleString()} = ₹{((product.quantity || 1) * (product.price || 0)).toLocaleString()}
+                              </Typography>
+                            </Box>
+                          ))}
                         </Box>
                         
                         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -1663,16 +1922,25 @@ const Payments = () => {
                           </Typography>
                         </TableCell>
                         <TableCell sx={{ width: 100, maxWidth: 100, padding: '8px 4px' }}>
-                          <Typography variant="body2" sx={{ 
-                            fontWeight: 500, 
-                            color: '#2c3e50',
-                            fontSize: '0.7rem',
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap'
-                          }}>
-                            {item.productName}
-                          </Typography>
+                          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                            {getProductsDisplay(item).map((product, idx) => (
+                              <Typography 
+                                key={idx}
+                                variant="body2" 
+                                sx={{ 
+                                  fontWeight: 500, 
+                                  color: '#2c3e50',
+                                  fontSize: '0.65rem',
+                                  overflow: 'hidden',
+                                  textOverflow: 'ellipsis',
+                                  whiteSpace: 'nowrap'
+                                }}
+                                title={`${product.productName} (Qty: ${product.quantity})`}
+                              >
+                                {product.productName} {product.quantity > 1 && `(x${product.quantity})`}
+                              </Typography>
+                            ))}
+                          </Box>
                         </TableCell>
                         <TableCell sx={{ width: 80, maxWidth: 80, padding: '8px 4px' }}>
                           <Typography variant="subtitle2" sx={{ 
@@ -2115,12 +2383,32 @@ const Payments = () => {
                       <Typography variant="subtitle2" sx={{ fontWeight: 600, color: '#2c3e50', mb: 1 }}>
                         Product Information
                       </Typography>
-                      <Typography variant="body1" sx={{ fontWeight: 500, color: '#2c3e50', mb: 0.5 }}>
-                        {selectedTransaction.productName}
-                      </Typography>
-                      <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-                        Product ID: {selectedTransaction.productId || 'N/A'}
-                      </Typography>
+                      {getProductsDisplay(selectedTransaction).length > 0 ? (
+                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+                          {getProductsDisplay(selectedTransaction).map((product, idx) => (
+                            <Box key={idx} sx={{ p: 1.5, backgroundColor: 'white', borderRadius: 1, border: '1px solid #e0e0e0' }}>
+                              <Typography variant="body1" sx={{ fontWeight: 500, color: '#2c3e50', mb: 0.5 }}>
+                                {product.productName}
+                              </Typography>
+                              <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
+                                <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+                                  Quantity: <strong>{product.quantity || 1}</strong>
+                                </Typography>
+                                <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+                                  Price: <strong>₹{(product.price || 0).toLocaleString()}</strong>
+                                </Typography>
+                                <Typography variant="body2" sx={{ color: '#f39c12', fontWeight: 600 }}>
+                                  Subtotal: <strong>₹{((product.quantity || 1) * (product.price || 0)).toLocaleString()}</strong>
+                                </Typography>
+                              </Box>
+                            </Box>
+                          ))}
+                        </Box>
+                      ) : (
+                        <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+                          No products found
+                        </Typography>
+                      )}
                     </Box>
                   </Grid>
                 </Grid>
