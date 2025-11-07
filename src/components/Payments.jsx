@@ -52,7 +52,8 @@ import {
   FirstPage as FirstPageIcon,
   LastPage as LastPageIcon,
   NavigateNext as NextPageIcon,
-  NavigateBefore as PrevPageIcon
+  NavigateBefore as PrevPageIcon,
+  Search as SearchIcon
 } from '@mui/icons-material';
 import { API_ENDPOINTS, API_BASE_URL } from '../config';
 
@@ -76,6 +77,7 @@ const Payments = () => {
   const [notification, setNotification] = useState({ open: false, message: '', severity: 'success' });
   const [screenshotFile, setScreenshotFile] = useState(null);
   const [screenshotPreview, setScreenshotPreview] = useState(null);
+  const [isDragging, setIsDragging] = useState(false);
   const [statusFilter, setStatusFilter] = useState('all');
   const [paymentTypeFilter, setPaymentTypeFilter] = useState('all');
   const [currentPage, setCurrentPage] = useState(1);
@@ -84,6 +86,8 @@ const Payments = () => {
   const [totalPages, setTotalPages] = useState(0);
   const [editingStatusId, setEditingStatusId] = useState(null);
   const [selectedProductId, setSelectedProductId] = useState('');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
 
   // New payment form state
   const [newPayment, setNewPayment] = useState({
@@ -113,10 +117,20 @@ const Payments = () => {
     fetchProducts();
   }, []);
 
-  // Refetch transactions when filters or pagination changes
+  // Debounce search term
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearchTerm(searchTerm);
+      setCurrentPage(1); // Reset to first page when searching
+    }, 500); // 500ms debounce delay
+
+    return () => clearTimeout(timer);
+  }, [searchTerm]);
+
+  // Refetch transactions when filters, pagination, or search changes
   useEffect(() => {
     fetchTransactions();
-  }, [currentPage, pageSize, statusFilter, paymentTypeFilter]);
+  }, [currentPage, pageSize, statusFilter, paymentTypeFilter, debouncedSearchTerm]);
 
   // Fetch transactions from API with pagination
   const fetchTransactions = async (page = currentPage, limit = pageSize) => {
@@ -135,6 +149,10 @@ const Payments = () => {
       
       if (paymentTypeFilter !== 'all') {
         params.append('paymentType', paymentTypeFilter);
+      }
+
+      if (debouncedSearchTerm.trim()) {
+        params.append('searchTerm', debouncedSearchTerm.trim());
       }
 
       const response = await fetch(`${API_ENDPOINTS.TRANSACTIONS}?${params.toString()}`, {
@@ -212,8 +230,18 @@ const Payments = () => {
 
   // Handle file upload
   const handleFileUpload = (event) => {
-    const file = event.target.files[0];
+    const file = event.target.files?.[0] || event.dataTransfer?.files?.[0];
     if (file) {
+      // Validate file type
+      if (!file.type.startsWith('image/')) {
+        showNotification('Please upload an image file', 'error');
+        return;
+      }
+      // Validate file size (5MB)
+      if (file.size > 5 * 1024 * 1024) {
+        showNotification('File size must be less than 5MB', 'error');
+        return;
+      }
       setScreenshotFile(file);
       const reader = new FileReader();
       reader.onload = (e) => {
@@ -221,6 +249,26 @@ const Payments = () => {
       };
       reader.readAsDataURL(file);
     }
+  };
+
+  // Handle drag and drop
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+    handleFileUpload(e);
   };
 
   // Remove screenshot
@@ -386,6 +434,7 @@ const Payments = () => {
         });
         removeScreenshot();
         setSelectedProductId('');
+        setIsDragging(false);
         setOpenAddPayment(false);
         showNotification('Transaction created successfully!', 'success');
       } else {
@@ -883,6 +932,7 @@ const Payments = () => {
         onClose={() => {
           setOpenAddPayment(false);
           setSelectedProductId('');
+          setIsDragging(false);
         }} 
         maxWidth="md" 
         fullWidth
@@ -1077,12 +1127,17 @@ const Payments = () => {
               
               {!screenshotPreview ? (
                 <Box
+                  onDragOver={handleDragOver}
+                  onDragLeave={handleDragLeave}
+                  onDrop={handleDrop}
                   sx={{
-                    border: '2px dashed #ccc',
+                    border: `2px dashed ${isDragging ? '#667eea' : '#ccc'}`,
                     borderRadius: 2,
                     p: isMobile ? 2 : 4,
                     textAlign: 'center',
                     cursor: 'pointer',
+                    backgroundColor: isDragging ? 'rgba(102, 126, 234, 0.1)' : 'transparent',
+                    transition: 'all 0.3s ease',
                     '&:hover': {
                       borderColor: '#667eea',
                       backgroundColor: 'rgba(102, 126, 234, 0.05)'
@@ -1090,9 +1145,14 @@ const Payments = () => {
                   }}
                   onClick={() => document.getElementById('screenshot-upload').click()}
                 >
-                  <UploadIcon sx={{ fontSize: isMobile ? 36 : 48, color: '#ccc', mb: 2 }} />
-                  <Typography variant={isMobile ? "body2" : "body1"} sx={{ color: '#666', mb: 1 }}>
-                    Click to upload payment screenshot
+                  <UploadIcon sx={{ 
+                    fontSize: isMobile ? 36 : 48, 
+                    color: isDragging ? '#667eea' : '#ccc', 
+                    mb: 2,
+                    transition: 'color 0.3s ease'
+                  }} />
+                  <Typography variant={isMobile ? "body2" : "body1"} sx={{ color: isDragging ? '#667eea' : '#666', mb: 1, fontWeight: isDragging ? 600 : 400 }}>
+                    {isDragging ? 'Drop the image here' : 'Click to upload or drag and drop'}
                   </Typography>
                   <Typography variant="body2" sx={{ color: '#999', fontSize: isMobile ? '0.75rem' : '0.875rem' }}>
                     PNG, JPG, JPEG up to 5MB
@@ -1461,6 +1521,27 @@ const Payments = () => {
             />
           </Box>
           <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', flexWrap: 'wrap' }}>
+            {/* Search Input */}
+            <TextField
+              size={isMobile ? "small" : "medium"}
+              placeholder="Search by UTR or Phone Number"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              InputProps={{
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <SearchIcon sx={{ color: 'text.secondary', fontSize: isMobile ? 18 : 20 }} />
+                  </InputAdornment>
+                ),
+              }}
+              sx={{
+                minWidth: isMobile ? 200 : 250,
+                '& .MuiOutlinedInput-root': {
+                  fontSize: isMobile ? '0.8rem' : '0.875rem'
+                }
+              }}
+            />
+            
             {/* Status Filter Dropdown */}
             <FormControl size={isMobile ? "small" : "medium"} sx={{ minWidth: isMobile ? 120 : 150 }}>
               <InputLabel>Filter Status</InputLabel>
